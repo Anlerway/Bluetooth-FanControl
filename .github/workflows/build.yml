@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+
+      - name: Restore
+        run: dotnet restore FanControl.UI\FanControl.UI.csproj
+
+      - name: Build
+        run: dotnet build FanControl.UI\FanControl.UI.csproj -c Release --no-restore
+
+      - name: Test
+        run: dotnet test tests\FanControl.Tests\FanControl.Tests.csproj -c Release --no-restore
+
+      - name: Publish (self-contained portable)
+        run: dotnet publish FanControl.UI\FanControl.UI.csproj -c Release -r win-x64 --self-contained true -p:WindowsAppSDKSelfContained=true -o artifacts\portable
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FanControl-win-x64-selfcontained
+          path: artifacts\portable
