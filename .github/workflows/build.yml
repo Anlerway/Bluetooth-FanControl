@@ -20,10 +20,10 @@ jobs:
           dotnet-version: '8.0.x'
 
       - name: Restore
-        run: dotnet restore FanControl.UI\FanControl.UI.csproj
+        run: dotnet restore FanControl.slnx
 
       - name: Build
-        run: dotnet build FanControl.UI\FanControl.UI.csproj -c Release --no-restore
+        run: dotnet build FanControl.slnx -c Release --no-restore
 
       - name: Test
         run: dotnet test tests\FanControl.Tests\FanControl.Tests.csproj -c Release --no-restore
