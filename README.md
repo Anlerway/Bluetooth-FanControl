@@ -6,12 +6,12 @@
 
 ![platform](https://img.shields.io/badge/Windows-10%2B-blue) ![.NET](https://img.shields.io/badge/.NET-8-green) ![ESP32](https://img.shields.io/badge/ESP32-SSD1306-orange)
 
-**上位机仓库**：[anlerways/Bluetooth-FanControl](https://github.com/anlerways/Bluetooth-FanControl)
-**固件仓库**：[anlerways/ESP32-LaptopFan](https://github.com/anlerways/ESP32-LaptopFan)
+**上位机仓库**：[anlerway/Bluetooth-FanControl](https://github.com/anlerway/Bluetooth-FanControl)
+**固件仓库**：[anlerway/ESP32-LaptopFan](https://github.com/anlerway/ESP32-LaptopFan)
 
 ## 下载
 
-- **GitHub Releases**：<https://github.com/anlerways/Bluetooth-FanControl/releases>
+- **GitHub Releases**：<https://github.com/anlerway/Bluetooth-FanControl/releases>
 - 提供 **安装包**（带安装向导、快捷方式、卸载）与 **免安装 zip**（解压即用）两种形态；
 - 每种形态分 **自带 .NET 运行库**（免装环境）与 **需 .NET 8 环境**（体积更小）两个版本；
 - 如遇杀软误报，请加入白名单或关闭杀软；不信任发行版可自行克隆仓库编译。
