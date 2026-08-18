@@ -6,12 +6,12 @@
 
 ![platform](https://img.shields.io/badge/Windows-10%2B-blue) ![.NET](https://img.shields.io/badge/.NET-8-green) ![ESP32](https://img.shields.io/badge/ESP32-SSD1306-orange)
 
-**Host repo**: [anlerways/Bluetooth-FanControl](https://github.com/anlerways/Bluetooth-FanControl)
-**Firmware repo**: [anlerways/ESP32-LaptopFan](https://github.com/anlerways/ESP32-LaptopFan)
+**Host repo**: [anlerway/Bluetooth-FanControl](https://github.com/anlerway/Bluetooth-FanControl)
+**Firmware repo**: [anlerway/ESP32-LaptopFan](https://github.com/anlerway/ESP32-LaptopFan)
 
 ## Downloads
 
-- **GitHub Releases**: <https://github.com/anlerways/Bluetooth-FanControl/releases>
+- **GitHub Releases**: <https://github.com/anlerway/Bluetooth-FanControl/releases>
 - Two forms: **installer** (with setup wizard, shortcuts, uninstaller) and **portable zip** (extract and run);
 - Each form comes in two flavors: **self-contained .NET runtime** (no runtime install needed) and **requires .NET 8** (smaller size);
 - If antivirus flags the build, add it to the whitelist or disable the AV temporarily; if you don't trust the binaries, clone the repo and build it yourself.
