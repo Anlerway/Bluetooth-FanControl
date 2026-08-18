@@ -11,7 +11,7 @@
 
 ## Downloads
 
-- **GitHub Releases**: <https://github.com/anlerway/Bluetooth-FanControl/releases>
+- **GitHub Releases**: <https://github.com/anlerway/Bluetooth-FanControl/releases/latest>
 - Two forms: **installer** (with setup wizard, shortcuts, uninstaller) and **portable zip** (extract and run);
 - Each form comes in two flavors: **self-contained .NET runtime** (no runtime install needed) and **requires .NET 8** (smaller size);
 - If antivirus flags the build, add it to the whitelist or disable the AV temporarily; if you don't trust the binaries, clone the repo and build it yourself.
