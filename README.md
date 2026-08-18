@@ -11,7 +11,7 @@
 
 ## 下载
 
-- **GitHub Releases**：<https://github.com/anlerway/Bluetooth-FanControl/releases>
+- **GitHub Releases**：<https://github.com/anlerway/Bluetooth-FanControl/releases/latest>
 - 提供 **安装包**（带安装向导、快捷方式、卸载）与 **免安装 zip**（解压即用）两种形态；
 - 每种形态分 **自带 .NET 运行库**（免装环境）与 **需 .NET 8 环境**（体积更小）两个版本；
 - 如遇杀软误报，请加入白名单或关闭杀软；不信任发行版可自行克隆仓库编译。
