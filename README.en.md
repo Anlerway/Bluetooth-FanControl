@@ -44,6 +44,37 @@ A full remake built on top of the 垃圾研究社 open-source hardware:
 - **Control dashboard**: live temperature / PWM / RPM tiles plus custom trend charts (CPU/GPU/PWM);
 - **Tray resident**: tray temperature preview, disconnect/error notifications, close-to-tray.
 
+## Software Settings
+
+### First-time Use
+- Whether you use the installer or the portable version, the software will prompt you to choose a location for user data before startup. You may select either the **installation directory** or the **AppData** folder.
+
+### Auto-start and Auto-reconnect
+- It is recommended to enable **Start with Windows**. The software will then launch automatically upon system boot and take over fan control.
+- Regardless of which side (PC or hardware device) comes online first, the software will automatically connect once both are available—no manual intervention is needed.
+
+### Configuring Temperature Data Sources
+- After opening the software, go to the Settings page and select an appropriate data source (e.g., LibreHardwareMonitor, ATKACPI, etc.).
+- For ASUS laptop users, it is recommended to directly choose **ATKACPI** mode.
+- Switch to the Dashboard and wait until temperature readings appear normally.
+
+### Control Modes
+- Choose your preferred control mode (Manual, CPU Temperature, GPU Temperature, Mixed Max, Mixed Average, Target RPM, etc.) in the Settings or Curve Editor.
+- The Dashboard will display real-time PWM output and the fan curve.
+
+### Communication Connection Methods
+
+#### BLE (Low Energy Bluetooth) Mode (Recommended)
+1. After the ESP32 device is powered on, it will broadcast a Bluetooth signal named `LAPTOP-FAN`. Pair it using your computer's Bluetooth settings.
+2. Open the host software, set the communication method to **BLE**, and select `LAPTOP_FAN` from the device list—no other configuration is required.
+3. Wait a moment; the connection should succeed, and the ESP32's OLED screen will start showing data.
+
+#### Serial (COM) Mode (Fallback)
+1. After the ESP32 device is powered on, press the menu button to switch from `BT Mode` to `COM`. The device will restart automatically and broadcast a Bluetooth signal named `LAPTOP-FAN-COM`.
+2. Pair `LAPTOP-FAN-COM` in your computer's Bluetooth settings; this will create a virtual COM port.
+3. Open the host software, set the communication method to **COM**, set the baud rate to `115200`, and select the corresponding COM port.
+4. Once connected, the ESP32's OLED screen will display data.
+
 ## Architecture
 
 Single-process design: the UI (WinUI 3) and background monitoring run in the same process; the tray runs on its own STA thread; resources are released together on exit.
