@@ -11,15 +11,11 @@ public class ConfigManagerTests : IDisposable
         Path.GetTempPath(),
         "FanControl.Tests." + Guid.NewGuid().ToString("N"));
 
-    // AppData 根目录 = _root（注入 systemConfigDirectory）；exe 根目录 = installDir\Userdata
     private ConfigManager CreateManager(string? installDirectory = null) =>
         new(
             NullLogger<ConfigManager>.Instance,
             _root,
             installDirectory ?? Path.Combine(_root, "install"));
-
-    private string AppDataConfigDir => Path.Combine(_root, "Config");
-    private string ExeConfigDir => Path.Combine(Path.Combine(_root, "install"), "Userdata", "Config");
 
     [Fact]
     public async Task LoadSystemConfig_MissingFile_ReturnsDefaults()
@@ -28,51 +24,49 @@ public class ConfigManagerTests : IDisposable
 
         var config = await manager.LoadSystemConfigAsync();
 
-        Assert.Equal(ConfigLocation.AppData, config.UserDataLocation);
+        Assert.Equal(ConfigLocation.UserData, config.ConfigLocation);
     }
 
     [Fact]
     public async Task SaveThenLoadSystemConfig_RoundTrip()
     {
         var manager = CreateManager();
-
-        await manager.SaveSystemConfigAsync(new SystemConfig
+        var expected = new SystemConfig
         {
-            UserDataLocation = ConfigLocation.ExeDirectory,
-            LogEnabled = false,
-        });
+            ConfigLocation = ConfigLocation.InstallDirectory,
+            UserDataDirectory = @"D:\some\dir",
+        };
 
-        var loaded = await manager.LoadSystemConfigAsync();
+        await manager.SaveSystemConfigAsync(expected);
+        var actual = await manager.LoadSystemConfigAsync();
 
-        Assert.Equal(ConfigLocation.ExeDirectory, loaded.UserDataLocation);
-        Assert.False(loaded.LogEnabled);
-        Assert.True(File.Exists(Path.Combine(ExeConfigDir, "system.json")));
+        Assert.Equal(expected, actual);
     }
 
     [Fact]
-    public void GetLogDirectory_RespectsUserDataLocation()
+    public void GetLogDirectory_RespectsLocation()
     {
-        var manager = CreateManager();
+        var manager = CreateManager(Path.Combine(_root, "install"));
 
         Assert.Equal(
-            Path.Combine(_root, "Logs"),
-            manager.GetLogDirectory(new SystemConfig { UserDataLocation = ConfigLocation.AppData }));
+            Path.Combine(_root, "install", "Logs"),
+            manager.GetLogDirectory(new SystemConfig
+            {
+                LogLocation = ConfigLocation.InstallDirectory,
+            }));
         Assert.Equal(
-            Path.Combine(Path.Combine(_root, "install"), "Userdata", "Logs"),
-            manager.GetLogDirectory(new SystemConfig { UserDataLocation = ConfigLocation.ExeDirectory }));
-    }
-
-    [Fact]
-    public void GetAppConfigFilePath_FollowsUserDataLocation()
-    {
-        var manager = CreateManager();
-
+            Path.Combine(_root, "user-data", "Logs"),
+            manager.GetLogDirectory(new SystemConfig
+            {
+                LogLocation = ConfigLocation.UserData,
+                UserDataDirectory = Path.Combine(_root, "user-data"),
+            }));
         Assert.Equal(
-            Path.Combine(AppDataConfigDir, "appconfig.json"),
-            manager.GetAppConfigFilePath(new SystemConfig { UserDataLocation = ConfigLocation.AppData }));
-        Assert.Equal(
-            Path.Combine(ExeConfigDir, "appconfig.json"),
-            manager.GetAppConfigFilePath(new SystemConfig { UserDataLocation = ConfigLocation.ExeDirectory }));
+            Path.Combine(_root, "data", "Logs"),
+            manager.GetLogDirectory(new SystemConfig
+            {
+                LogLocation = ConfigLocation.UserData,
+            }));
     }
 
     [Fact]
@@ -88,12 +82,13 @@ public class ConfigManagerTests : IDisposable
     }
 
     [Fact]
-    public async Task SaveThenLoadAppConfig_AppDataRoundTrip()
+    public async Task SaveThenLoadAppConfig_UserDataRoundTrip()
     {
         var manager = CreateManager();
         await manager.SaveSystemConfigAsync(new SystemConfig
         {
-            UserDataLocation = ConfigLocation.AppData,
+            ConfigLocation = ConfigLocation.UserData,
+            UserDataDirectory = Path.Combine(_root, "user-data"),
         });
 
         var expected = new AppConfig
@@ -101,33 +96,36 @@ public class ConfigManagerTests : IDisposable
             TemperatureSource = TemperatureSource.AtkAcpi,
             FanControlMode = FanControlMode.Mixed,
             CommunicationType = CommunicationType.Ble,
+            BleDeviceMac = "AA:BB:CC:DD:EE:FF",
             BleDeviceName = "ESP32-Fan",
             Theme = ThemeType.Dark,
         };
         await manager.SaveAppConfigAsync(expected);
 
-        Assert.True(File.Exists(Path.Combine(AppDataConfigDir, "appconfig.json")));
         var actual = await manager.LoadAppConfigAsync();
+
         Assert.Equal(expected.TemperatureSource, actual.TemperatureSource);
         Assert.Equal(expected.FanControlMode, actual.FanControlMode);
         Assert.Equal(expected.CommunicationType, actual.CommunicationType);
         Assert.Equal(expected.BleDeviceName, actual.BleDeviceName);
+        Assert.Equal(expected.BleDeviceMac, actual.BleDeviceMac);
         Assert.Equal(expected.Theme, actual.Theme);
     }
 
     [Fact]
-    public async Task SaveThenLoadAppConfig_ExeDirectoryMode()
+    public async Task SaveThenLoadAppConfig_InstallDirectoryMode()
     {
-        var manager = CreateManager();
+        var installDir = Path.Combine(_root, "install");
+        var manager = CreateManager(installDir);
         await manager.SaveSystemConfigAsync(new SystemConfig
         {
-            UserDataLocation = ConfigLocation.ExeDirectory,
+            ConfigLocation = ConfigLocation.InstallDirectory,
         });
 
         var expected = new AppConfig { FanControlMode = FanControlMode.SystemFan };
         await manager.SaveAppConfigAsync(expected);
 
-        Assert.True(File.Exists(Path.Combine(ExeConfigDir, "appconfig.json")));
+        Assert.True(File.Exists(Path.Combine(installDir, "appconfig.json")));
         Assert.Equal(
             FanControlMode.SystemFan,
             (await manager.LoadAppConfigAsync()).FanControlMode);
@@ -137,120 +135,16 @@ public class ConfigManagerTests : IDisposable
     public async Task CorruptJson_ReturnsDefaults()
     {
         var manager = CreateManager();
-        Directory.CreateDirectory(AppDataConfigDir);
-        await File.WriteAllTextAsync(Path.Combine(AppDataConfigDir, "system.json"), "{ not json !!");
-        await File.WriteAllTextAsync(Path.Combine(AppDataConfigDir, "appconfig.json"), "###");
+        Directory.CreateDirectory(_root);
+        await File.WriteAllTextAsync(Path.Combine(_root, "system.json"), "{ not json !!");
+        Directory.CreateDirectory(Path.Combine(_root, "data"));
+        await File.WriteAllTextAsync(Path.Combine(_root, "data", "appconfig.json"), "###");
 
         var system = await manager.LoadSystemConfigAsync();
         var app = await manager.LoadAppConfigAsync();
 
-        Assert.Equal(ConfigLocation.AppData, system.UserDataLocation);
+        Assert.Equal(ConfigLocation.UserData, system.ConfigLocation);
         Assert.Equal(TemperatureSource.LibreHardwareMonitor, app.TemperatureSource);
-    }
-
-    [Fact]
-    public async Task SaveSystemConfig_LocationChange_MigratesAppConfig()
-    {
-        var manager = CreateManager();
-
-        // 初始在 AppData 保存配置
-        await manager.SaveSystemConfigAsync(new SystemConfig
-        {
-            UserDataLocation = ConfigLocation.AppData,
-        });
-        var expected = new AppConfig { FanControlMode = FanControlMode.SystemFan };
-        await manager.SaveAppConfigAsync(expected);
-        Assert.True(File.Exists(Path.Combine(AppDataConfigDir, "appconfig.json")));
-
-        // 切换到 exe 目录：配置应随之迁移
-        await manager.SaveSystemConfigAsync(new SystemConfig
-        {
-            UserDataLocation = ConfigLocation.ExeDirectory,
-        });
-
-        Assert.False(File.Exists(Path.Combine(AppDataConfigDir, "appconfig.json")));
-        Assert.True(File.Exists(Path.Combine(ExeConfigDir, "appconfig.json")));
-        Assert.Equal(
-            FanControlMode.SystemFan,
-            (await manager.LoadAppConfigAsync()).FanControlMode);
-    }
-
-    [Fact]
-    public async Task SaveSystemConfig_LocationChange_MigratesLogs()
-    {
-        var manager = CreateManager();
-
-        await manager.SaveSystemConfigAsync(new SystemConfig
-        {
-            UserDataLocation = ConfigLocation.AppData,
-        });
-        var oldLogs = Path.Combine(_root, "Logs");
-        Directory.CreateDirectory(oldLogs);
-        await File.WriteAllTextAsync(Path.Combine(oldLogs, "fancontrol-20260101.log"), "line");
-
-        await manager.SaveSystemConfigAsync(new SystemConfig
-        {
-            UserDataLocation = ConfigLocation.ExeDirectory,
-        });
-
-        Assert.True(File.Exists(
-            Path.Combine(Path.Combine(_root, "install"), "Userdata", "Logs", "fancontrol-20260101.log")));
-        Assert.False(File.Exists(Path.Combine(oldLogs, "fancontrol-20260101.log")));
-    }
-
-    [Fact]
-    public async Task SaveSystemConfig_NoLocationChange_DoesNotMigrate()
-    {
-        var manager = CreateManager();
-
-        await manager.SaveSystemConfigAsync(new SystemConfig
-        {
-            UserDataLocation = ConfigLocation.AppData,
-        });
-        var marker = Path.Combine(AppDataConfigDir, "appconfig.json");
-        Directory.CreateDirectory(AppDataConfigDir);
-        await File.WriteAllTextAsync(marker, "keep-me");
-
-        await manager.SaveSystemConfigAsync(new SystemConfig
-        {
-            UserDataLocation = ConfigLocation.AppData,
-        });
-
-        Assert.True(File.Exists(marker));
-        Assert.Equal("keep-me", await File.ReadAllTextAsync(marker));
-    }
-
-    [Fact]
-    public async Task SaveSystemConfig_FirstSave_NoPriorConfig_MigrateIsNoOp()
-    {
-        var manager = CreateManager();
-
-        await manager.SaveSystemConfigAsync(new SystemConfig
-        {
-            UserDataLocation = ConfigLocation.ExeDirectory,
-        });
-
-        var loaded = await manager.LoadSystemConfigAsync();
-        Assert.Equal(ConfigLocation.ExeDirectory, loaded.UserDataLocation);
-    }
-
-    [Fact]
-    public void LegacyLayout_NormalizedToConfigSubdirectory()
-    {
-        // 构造前先写入旧版布局：system.json / appconfig.json 平铺在根目录，日志在根目录 Logs
-        Directory.CreateDirectory(Path.Combine(_root, "Logs"));
-        File.WriteAllText(Path.Combine(_root, "system.json"), "{\"userDataLocation\":1}");
-        File.WriteAllText(Path.Combine(_root, "appconfig.json"), "{}");
-        File.WriteAllText(Path.Combine(_root, "Logs", "fancontrol-20260101.log"), "line");
-
-        // 构造时自动迁移到新布局
-        var manager = CreateManager();
-
-        Assert.True(File.Exists(Path.Combine(AppDataConfigDir, "system.json")));
-        Assert.True(File.Exists(Path.Combine(AppDataConfigDir, "appconfig.json")));
-        Assert.True(File.Exists(Path.Combine(_root, "Logs", "fancontrol-20260101.log")));
-        Assert.False(File.Exists(Path.Combine(_root, "system.json")));
-        Assert.False(File.Exists(Path.Combine(_root, "appconfig.json")));
     }
 
     public void Dispose()

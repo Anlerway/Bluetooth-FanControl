@@ -6,12 +6,12 @@
 
 ![platform](https://img.shields.io/badge/Windows-10%2B-blue) ![.NET](https://img.shields.io/badge/.NET-8-green) ![ESP32](https://img.shields.io/badge/ESP32-SSD1306-orange)
 
-**上位机仓库**：[anlerways/Bluetooth-FanControl](https://github.com/anlerways/Bluetooth-FanControl)
-**固件仓库**：[anlerways/ESP32-LaptopFan](https://github.com/anlerways/ESP32-LaptopFan)
+**上位机仓库**：[anlerway/Bluetooth-FanControl](https://github.com/anlerway/Bluetooth-FanControl)
+**固件仓库**：[anlerway/ESP32-LaptopFan](https://github.com/anlerway/ESP32-LaptopFan)
 
 ## 下载
 
-- **GitHub Releases**：<https://github.com/anlerways/Bluetooth-FanControl/releases>
+- **GitHub Releases**：<https://github.com/anlerway/Bluetooth-FanControl/releases>
 - 提供 **安装包**（带安装向导、快捷方式、卸载）与 **免安装 zip**（解压即用）两种形态；
 - 每种形态分 **自带 .NET 运行库**（免装环境）与 **需 .NET 8 环境**（体积更小）两个版本；
 - 如遇杀软误报，请加入白名单或关闭杀软；不信任发行版可自行克隆仓库编译。
@@ -66,12 +66,12 @@ FanControl.slnx
 
 - Windows 10/11 x64；
 - .NET 8 SDK（8.0.423+）——仅编译源码需要；
-- Visual Studio 2026（含 WinUI 3 / Windows App SDK 工作负载）——仅构建主程序需要；
-- Inno Setup 6（用于打安装包）。
+- Inno Setup 6（`D:\APP\Inno Setup 6`，仅打安装包需要）；
+- Visual Studio 2026（可选，命令行编译不需要）。
 
 ## 构建
 
-前置：.NET 8 SDK（8.0.423+）、Visual Studio 2026（WinUI 3 工作负载）。
+前置：.NET 8 SDK（8.0.423+）。
 
 ```powershell
 # 类库与测试
@@ -79,16 +79,28 @@ dotnet build FanControl.Shared
 dotnet build FanControl.Service
 dotnet test tests/FanControl.Tests
 
-# 主程序（WinUI 3，非打包模式，x64；在 VS2026 开发人员命令提示符中执行）
-msbuild FanControl.UI\FanControl.UI.csproj /restore /p:Configuration=Debug /p:Platform=x64
-
-# 发布为自包含单进程 exe（免装 .NET）
-msbuild FanControl.UI\FanControl.UI.csproj /restore /t:Publish /p:Configuration=Release /p:Platform=x64 /p:RuntimeIdentifier=win-x64 /p:WindowsAppSDKSelfContained=true /p:PublishDir=artifacts\exe\FanControl
+# 日常调试编译主程序（x64）
+dotnet build FanControl.UI\FanControl.UI.csproj -c Debug -r win-x64
 ```
+
+### 一键打四个发行版本
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File FanControl.Installer\_build-release.ps1
+```
+
+产物（`PublishSingleFile` 关闭，主程序以普通目录形式发布，不做单文件打包）：
+
+| 形态 | 自带运行库（免装 .NET） | 需 .NET 8 |
+| --- | --- | --- |
+| 免安装压缩包 | `artifacts\release\FanControl-1.2.0-selfcontained-win-x64.zip` | `artifacts\release\FanControl-1.2.0-framework-win-x64.zip` |
+| 安装包 | `artifacts\installer\FanControl-Setup-Full-1.2.0.exe` | `artifacts\installer\FanControl-Setup-Slim-1.2.0.exe` |
+
+> 安装包阶段**不检测** .NET 运行环境，避免未装 .NET 的机器直接安装失败；需环境版装好后由程序自身提示。
 
 ## 运行
 
-直接运行 [artifacts\exe\FanControl\FanControl.exe](artifacts/exe/FanControl/FanControl.exe)，或使用桌面发行版的安装包/免安装 zip：
+解压免安装压缩包或安装后直接运行 `FanControl.exe`：
 
 - 主窗口：仪表盘（实时温度/趋势）、设置、曲线编辑器；
 - 托盘：打开主界面 / 开机自启 / 退出；关闭主窗口 = 最小化到托盘，后台监控继续；

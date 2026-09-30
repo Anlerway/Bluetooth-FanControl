@@ -130,6 +130,12 @@
   <data name="Settings.ReconnectRequested" xml:space="preserve">
     <value>Reconnecting…</value>
   </data>
+  <data name="Settings.RefreshBle" xml:space="preserve">
+    <value>Refresh</value>
+  </data>
+  <data name="Settings.BleRefreshed" xml:space="preserve">
+    <value>BLE device list refreshed ({0})</value>
+  </data>
   <data name="Settings.Language" xml:space="preserve">
     <value>Language</value>
   </data>
@@ -200,7 +206,7 @@
     <value>Baud rate</value>
   </data>
   <data name="Row.BleName" xml:space="preserve">
-    <value>BLE device</value>
+    <value>BLE device (by MAC)</value>
   </data>
   <data name="Row.BlePoll" xml:space="preserve">
     <value>Poll (s)</value>
@@ -220,8 +226,8 @@
   <data name="Row.Autostart" xml:space="preserve">
     <value>Run on startup</value>
   </data>
-  <data name="Row.UserDataLocation" xml:space="preserve">
-    <value>User data location</value>
+  <data name="Row.LogLocation" xml:space="preserve">
+    <value>Log location</value>
   </data>
   <data name="Row.LogEnabled" xml:space="preserve">
     <value>Write logs</value>
@@ -370,9 +376,6 @@
   <data name="About.Title" xml:space="preserve">
     <value>About</value>
   </data>
-  <data name="About.Subtitle" xml:space="preserve">
-    <value>Single-process fan control (UI + tray + service)</value>
-  </data>
   <data name="About.Libraries" xml:space="preserve">
     <value>Libraries</value>
   </data>
@@ -383,10 +386,10 @@
     <value>Open source</value>
   </data>
   <data name="About.SourceLink" xml:space="preserve">
-    <value>anlerways/Bluetooth-FanControl</value>
+    <value>anlerway/Bluetooth-FanControl</value>
   </data>
   <data name="About.SourceFirmware" xml:space="preserve">
-    <value>anlerways/ESP32-LaptopFan (firmware)</value>
+    <value>anlerway/ESP32-LaptopFan (firmware)</value>
   </data>
   <data name="About.SourcePending" xml:space="preserve">
     <value>GitHub repository will be added on release.</value>

@@ -1,4 +1,5 @@
 using FanControl.Service.Config;
+using FanControl.Shared.Contracts;
 using FanControl.Shared.Enums;
 using Microsoft.Extensions.Logging;
 using Windows.Devices.Bluetooth;
@@ -39,29 +40,34 @@ public sealed class BleChannel : ICommunicationChannel
     public async Task ConnectAsync(CancellationToken cancellationToken = default)
     {
         var config = await _configManager.LoadAppConfigAsync(cancellationToken);
+        var targetMac = config.BleDeviceMac;
         var deviceName = config.BleDeviceName;
-        if (string.IsNullOrWhiteSpace(deviceName))
+        if (string.IsNullOrWhiteSpace(targetMac) && string.IsNullOrWhiteSpace(deviceName))
         {
-            throw new InvalidOperationException("未配置 BLE 设备名，请在设置中填写。");
+            throw new InvalidOperationException("未配置 BLE 设备，请在设置中选择设备。");
         }
 
         var devices = await WithTimeoutAsync(
             DeviceInformation.FindAllAsync(BluetoothLEDevice.GetDeviceSelector()).AsTask(cancellationToken),
             TimeSpan.FromSeconds(10),
             "设备枚举");
-        var deviceInfo = devices.FirstOrDefault(d =>
-            string.Equals(d.Name, deviceName, StringComparison.OrdinalIgnoreCase));
+
+        var deviceInfo = ResolveDevice(devices, targetMac, deviceName);
 
         if (deviceInfo is null)
         {
-            throw new InvalidOperationException($"未找到已配对的蓝牙设备：{deviceName}");
+            throw new InvalidOperationException(string.IsNullOrWhiteSpace(targetMac)
+                ? $"未找到已配对的蓝牙设备：{deviceName}"
+                : $"未找到已配对的蓝牙设备（MAC {targetMac}），请在设置中刷新后重新选择。");
         }
 
+        // 显示名优先用配置里的名称，其次用系统枚举到的名称
+        var displayName = !string.IsNullOrWhiteSpace(deviceName) ? deviceName : deviceInfo.Name;
         var device = await WithTimeoutAsync(
             BluetoothLEDevice.FromIdAsync(deviceInfo.Id).AsTask(cancellationToken),
             TimeSpan.FromSeconds(10),
             "打开设备")
-            ?? throw new InvalidOperationException($"无法打开蓝牙设备：{deviceName}");
+            ?? throw new InvalidOperationException($"无法打开蓝牙设备：{displayName}");
 
         GattDeviceServicesResult serviceResult;
         GattCharacteristicsResult rxResult;
@@ -77,7 +83,7 @@ public sealed class BleChannel : ICommunicationChannel
             if (serviceResult.Status != GattCommunicationStatus.Success
                 || serviceResult.Services.Count == 0)
             {
-                throw new InvalidOperationException($"{deviceName} 未提供 NUS 服务，请确认固件已启用 BLE 模式。");
+                throw new InvalidOperationException($"{displayName} 未提供 NUS 服务，请确认固件已启用 BLE 模式。");
             }
 
             var service = serviceResult.Services[0];
@@ -213,6 +219,38 @@ public sealed class BleChannel : ICommunicationChannel
         {
             throw new InvalidOperationException($"BLE 写入失败：{writeStatus}");
         }
+    }
+
+    /// <summary>
+    /// 设备定位：优先按 MAC 地址匹配（唯一）；未配置 MAC 时回退按名称匹配（兼容旧配置）。
+    /// </summary>
+    private static DeviceInformation? ResolveDevice(
+        DeviceInformationCollection devices,
+        string targetMac,
+        string deviceName)
+    {
+        if (!string.IsNullOrWhiteSpace(targetMac))
+        {
+            foreach (var device in devices)
+            {
+                if (BleDeviceMatcher.MacEquals(BleDeviceMatcher.ParseMacFromId(device.Id), targetMac))
+                {
+                    return device;
+                }
+            }
+
+            return null;
+        }
+
+        foreach (var device in devices)
+        {
+            if (string.Equals(device.Name, deviceName, StringComparison.OrdinalIgnoreCase))
+            {
+                return device;
+            }
+        }
+
+        return null;
     }
 
     private static async Task<T> WithTimeoutAsync<T>(Task<T> task, TimeSpan timeout, string operation)

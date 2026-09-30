@@ -9,10 +9,10 @@ public interface IConfigManager
 
     Task SaveSystemConfigAsync(SystemConfig config, CancellationToken cancellationToken = default);
 
-    /// <summary>程序安装目录。</summary>
+    /// <summary>程序安装目录（日志/配置可存放于此）。</summary>
     string InstallDirectory { get; }
 
-    /// <summary>按系统配置解析日志目录（数据根目录下的 Logs）。</summary>
+    /// <summary>按系统配置解析日志目录（用户数据目录或安装目录下的 Logs）。</summary>
     string GetLogDirectory(SystemConfig systemConfig);
 
     Task<AppConfig> LoadAppConfigAsync(CancellationToken cancellationToken = default);

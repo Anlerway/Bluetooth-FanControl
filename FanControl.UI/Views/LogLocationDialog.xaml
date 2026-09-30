@@ -56,7 +56,7 @@
                 Foreground="#0E7C86"
                 VerticalAlignment="Center" />
             <TextBlock
-                Text="用户数据位置 / User data location"
+                Text="日志文件存放位置 / Log file location"
                 FontSize="13"
                 Foreground="#666666"
                 Margin="12,0,0,0"
@@ -64,20 +64,20 @@
         </StackPanel>
 
         <TextBlock Margin="0,16,0,0" FontSize="13" TextWrapping="Wrap">
-            请选择用户数据存放位置（系统设置、配置与日志均存放于此，之后可在设置中修改）： / Choose where to store user data (settings, config and logs; can be changed later in Settings):
+            请选择日志文件存放位置（之后可在设置中修改）：/ Choose where to store log files (can be changed later in Settings):
         </TextBlock>
 
         <StackPanel Orientation="Horizontal" Margin="0,16,0,0">
             <Button x:Name="DataButton" Style="{StaticResource PathButton}" Click="Data_Click">
                 <StackPanel>
-                    <TextBlock Text="用户数据目录 (AppData) / User data (AppData)" FontWeight="SemiBold" FontSize="13" />
+                    <TextBlock Text="用户数据目录 (data) / User data (data)" FontWeight="SemiBold" FontSize="13" />
                     <TextBlock x:Name="DataPathText" FontSize="11" Foreground="#777777" Margin="0,6,0,0"
                                TextTrimming="CharacterEllipsis" />
                 </StackPanel>
             </Button>
             <Button x:Name="InstallButton" Style="{StaticResource PathButton}" Margin="0" Click="Install_Click">
                 <StackPanel>
-                    <TextBlock Text="exe 目录 (Userdata) / exe directory (Userdata)" FontWeight="SemiBold" FontSize="13" />
+                    <TextBlock Text="安装目录 / Install directory" FontWeight="SemiBold" FontSize="13" />
                     <TextBlock x:Name="InstallPathText" FontSize="11" Foreground="#777777" Margin="0,6,0,0"
                                TextTrimming="CharacterEllipsis" />
                 </StackPanel>
@@ -85,7 +85,7 @@
         </StackPanel>
 
         <TextBlock
-            Text="提示：数据根目录下固定分两个子目录：Config\（system.json + appconfig.json）与 Logs\（日志）。exe 目录模式需要管理员权限（本程序以管理员运行）。"
+            Text="提示：安装目录需要管理员权限（本程序以管理员运行）；用户数据目录位于 %AppData%\FanControl\data。"
             FontSize="11"
             Foreground="#999999"
             TextWrapping="Wrap"

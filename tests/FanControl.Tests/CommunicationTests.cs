@@ -61,6 +61,6 @@ public class CommunicationTests
             NullLogger<BleChannel>.Instance);
 
         var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => channel.ConnectAsync());
-        Assert.Contains("BLE 设备名", exception.Message);
+        Assert.Contains("BLE 设备", exception.Message);
     }
 }

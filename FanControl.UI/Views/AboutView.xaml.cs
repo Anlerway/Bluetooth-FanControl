@@ -12,7 +12,7 @@ namespace FanControl.UI.Views;
 
 public partial class AboutView : UserControl
 {
-    private const string UpdateRepo = "anlerways/Bluetooth-FanControl";
+    private const string UpdateRepo = "anlerway/Bluetooth-FanControl";
 
     private static readonly HttpClient Http = CreateHttpClient();
 
@@ -27,8 +27,8 @@ public partial class AboutView : UserControl
     {
         InitializeComponent();
 
-        var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0";
-        VersionText.Text = $"FanControl v{version} · {LocalizationManager.Get("About.Subtitle")}";
+        var version = Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.2.0";
+        VersionText.Text = $"FanControl v{version}";
     }
 
     private void Hyperlink_RequestNavigate(object sender, RequestNavigateEventArgs e)

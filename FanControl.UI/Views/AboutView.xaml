@@ -38,11 +38,11 @@
                     <TextBlock Text="{loc:Translate About.Source}" FontSize="13" FontWeight="Bold"
                                Foreground="{DynamicResource TextPrimaryBrush}" Margin="0,0,0,8" />
                     <TextBlock Foreground="{DynamicResource TextPrimaryBrush}" TextWrapping="Wrap">
-                        <Hyperlink NavigateUri="https://github.com/anlerways/Bluetooth-FanControl" RequestNavigate="Hyperlink_RequestNavigate">
+                        <Hyperlink NavigateUri="https://github.com/anlerway/Bluetooth-FanControl" RequestNavigate="Hyperlink_RequestNavigate">
                             <Run Text="{loc:Translate About.SourceLink}" />
                         </Hyperlink>
                         <LineBreak />
-                        <Hyperlink NavigateUri="https://github.com/anlerways/ESP32-LaptopFan" RequestNavigate="Hyperlink_RequestNavigate">
+                        <Hyperlink NavigateUri="https://github.com/anlerway/ESP32-LaptopFan" RequestNavigate="Hyperlink_RequestNavigate">
                             <Run Text="{loc:Translate About.SourceFirmware}" />
                         </Hyperlink>
                     </TextBlock>

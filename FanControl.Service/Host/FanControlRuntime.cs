@@ -634,12 +634,12 @@ public sealed class FanControlRuntime : IAsyncDisposable
     }
 
     /// <summary>
-    /// 通信配置变更检测：切换端口/波特率/BLE 名/通信方式后，
+    /// 通信配置变更检测：切换端口/波特率/BLE 设备（MAC）/通信方式后，
     /// 断开旧通道并重置重连状态，下一周期按新配置重新握手。
     /// </summary>
     private async Task EnsureCommConfigAsync(AppConfig config)
     {
-        var signature = $"{config.CommunicationType}|{config.ComPort}|{config.ComBaudRate}|{config.BleDeviceName}";
+        var signature = $"{config.CommunicationType}|{config.ComPort}|{config.ComBaudRate}|{config.BleDeviceMac}|{config.BleDeviceName}";
         if (signature == _commSignature)
         {
             return;

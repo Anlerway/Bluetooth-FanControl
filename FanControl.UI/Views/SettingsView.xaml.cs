@@ -5,13 +5,13 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.IO.Ports;
 using System.Linq;
+using FanControl.Service.Communication;
 using FanControl.Service.Host;
 using FanControl.Service.Tray;
+using FanControl.Shared.Contracts;
 using FanControl.Shared.Enums;
 using FanControl.Shared.Models;
 using FanControl.UI.Localization;
-using Windows.Devices.Bluetooth;
-using Windows.Devices.Enumeration;
 
 namespace FanControl.UI.Views;
 
@@ -265,14 +265,9 @@ public partial class SettingsView : UserControl
 
             BaudBox.Text = _config.ComBaudRate.ToString();
 
-            var bleNames = await GetBleDeviceNamesAsync();
-            if (!string.IsNullOrEmpty(_config.BleDeviceName) && !bleNames.Contains(_config.BleDeviceName))
-            {
-                bleNames.Add(_config.BleDeviceName);
-            }
-
-            BleBox.ItemsSource = bleNames;
-            BleBox.SelectedItem = string.IsNullOrEmpty(_config.BleDeviceName) ? null : _config.BleDeviceName;
+            var bleItems = await BuildBleItemsAsync(_config.BleDeviceMac, _config.BleDeviceName);
+            BleBox.ItemsSource = bleItems;
+            BleBox.SelectedItem = FindBleItem(bleItems, _config.BleDeviceMac, _config.BleDeviceName);
             PollSlider.Value = Math.Clamp(_config.PollIntervalMilliseconds / 1000.0, 0.1, 5);
             PollValue.Text = $"{PollSlider.Value:0.0}";
             SmoothSlider.Value = Math.Clamp(_config.PwmSmoothing, 0.1, 1);
@@ -291,7 +286,7 @@ public partial class SettingsView : UserControl
             LangCombo.SelectedIndex = LocalizationManager.CurrentLanguage == "en-US" ? 1 : 0;
             UnitCombo.SelectedIndex = _config.TemperatureUnit == TemperatureUnit.Fahrenheit ? 1 : 0;
             LogLocationCombo.SelectedIndex =
-                _systemConfig.UserDataLocation == ConfigLocation.ExeDirectory ? 1 : 0;
+                _systemConfig.LogLocation == ConfigLocation.InstallDirectory ? 1 : 0;
             LogToggle.IsChecked = _systemConfig.LogEnabled;
             StatusText.Text = LocalizationManager.Get("Settings.Loaded");
         }
@@ -319,7 +314,8 @@ public partial class SettingsView : UserControl
                 CommunicationType = ValueAt(CommValues, CommCombo.SelectedIndex),
                 ComPort = ComPortBox.SelectedItem?.ToString() ?? _config.ComPort,
                 ComBaudRate = int.TryParse(BaudBox.Text, out var baud) ? baud : 115200,
-                BleDeviceName = BleBox.SelectedItem?.ToString() ?? string.Empty,
+                BleDeviceMac = (BleBox.SelectedItem as BleDeviceInfo)?.MacAddress ?? string.Empty,
+                BleDeviceName = (BleBox.SelectedItem as BleDeviceInfo)?.Name ?? string.Empty,
                 ManualPwmPercent = ManualSlider.Value,
                 PollIntervalMilliseconds = (int)Math.Round(PollSlider.Value * 1000),
                 PwmSmoothing = SmoothSlider.Value,
@@ -339,9 +335,9 @@ public partial class SettingsView : UserControl
 
             var systemUpdated = _systemConfig with
             {
-                UserDataLocation = LogLocationCombo.SelectedIndex == 1
-                    ? ConfigLocation.ExeDirectory
-                    : ConfigLocation.AppData,
+                LogLocation = LogLocationCombo.SelectedIndex == 1
+                    ? ConfigLocation.InstallDirectory
+                    : ConfigLocation.UserData,
                 LogEnabled = LogToggle.IsChecked == true,
             };
             await _runtime.SaveSystemConfigAsync(systemUpdated);
@@ -361,6 +357,34 @@ public partial class SettingsView : UserControl
     {
         _runtime.RequestReconnect();
         StatusText.Text = LocalizationManager.Get("Settings.ReconnectRequested");
+    }
+
+    /// <summary>刷新 BLE 设备列表：保留当前选中的设备（按 MAC 匹配），不触发自动保存。</summary>
+    private async void RefreshBle_Click(object sender, RoutedEventArgs e)
+    {
+        var previous = BleBox.SelectedItem as BleDeviceInfo;
+        var targetMac = previous?.MacAddress ?? _config.BleDeviceMac;
+        var targetName = previous?.Name ?? _config.BleDeviceName;
+
+        BleRefreshButton.IsEnabled = false;
+        var wasLoading = _loading;
+        _loading = true;
+        try
+        {
+            var items = await BuildBleItemsAsync(targetMac, targetName);
+            BleBox.ItemsSource = items;
+            BleBox.SelectedItem = FindBleItem(items, targetMac, targetName);
+            StatusText.Text = string.Format(LocalizationManager.Get("Settings.BleRefreshed"), items.Count);
+        }
+        catch (Exception ex)
+        {
+            StatusText.Text = string.Format(LocalizationManager.Get("Settings.SaveFailed"), ex.Message);
+        }
+        finally
+        {
+            _loading = wasLoading;
+            BleRefreshButton.IsEnabled = true;
+        }
     }
 
     private async void Autostart_Changed(object sender, RoutedEventArgs e)
@@ -529,34 +553,66 @@ public partial class SettingsView : UserControl
         return ports;
     }
 
-    /// <summary>枚举系统已配对蓝牙设备名（桌面应用可直接使用 WinRT 枚举）。</summary>
-    private static async Task<ObservableCollection<string>> GetBleDeviceNamesAsync()
+    /// <summary>
+    /// 构建 BLE 设备列表（MAC 为定位主键，名称仅显示）：
+    /// 已枚举设备 + 当前配置设备（旧配置只有名称、或设备当前未在场时仍可见）。
+    /// </summary>
+    private static async Task<List<BleDeviceInfo>> BuildBleItemsAsync(
+        string? configuredMac = null,
+        string? configuredName = null)
     {
-        var names = new ObservableCollection<string>();
-        try
-        {
-            var selector = BluetoothDevice.GetDeviceSelector();
-            var enumeration = DeviceInformation.FindAllAsync(selector).AsTask();
-            var finished = await Task.WhenAny(enumeration, Task.Delay(TimeSpan.FromSeconds(5)));
-            if (finished != enumeration)
-            {
-                return names; // 枚举超时，返回空列表（保留当前配置值）
-            }
+        var items = new List<BleDeviceInfo>();
+        var devices = await BleDeviceScanner.EnumerateAsync();
+        items.AddRange(devices);
 
-            foreach (var name in enumeration.Result.Select(d => d.Name)
-                         .Where(n => !string.IsNullOrWhiteSpace(n))
-                         .Distinct()
-                         .OrderBy(n => n))
-            {
-                names.Add(name);
-            }
-        }
-        catch
+        var mac = configuredMac ?? string.Empty;
+        var name = configuredName ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(mac) && string.IsNullOrWhiteSpace(name))
         {
-            // 蓝牙枚举不可用时保持空列表
+            return items;
         }
 
-        return names;
+        var matched = FindBleItem(items, mac, name);
+        if (matched is not null)
+        {
+            // 枚举结果优先用于显示（名称可能已更新），配置值作为兜底
+            if (!string.IsNullOrWhiteSpace(name) && string.IsNullOrWhiteSpace(matched.Name))
+            {
+                items[items.IndexOf(matched)] = matched with { Name = name };
+            }
+
+            return items;
+        }
+
+        items.Add(new BleDeviceInfo(name, mac));
+        return items;
+    }
+
+    /// <summary>
+    /// 在列表中定位设备：优先比较 MAC；MAC 均为未知时退化为比较名称（兼容旧配置）。
+    /// </summary>
+    private static BleDeviceInfo? FindBleItem(
+        IEnumerable<BleDeviceInfo> items,
+        string? mac,
+        string? name)
+    {
+        var list = items as IList<BleDeviceInfo> ?? items.ToList();
+        if (!string.IsNullOrWhiteSpace(mac))
+        {
+            var byMac = list.FirstOrDefault(d => BleDeviceMatcher.MacEquals(d.MacAddress, mac));
+            if (byMac is not null)
+            {
+                return byMac;
+            }
+        }
+
+        if (string.IsNullOrWhiteSpace(name))
+        {
+            return null;
+        }
+
+        return list.FirstOrDefault(d =>
+            string.Equals(d.Name, name, StringComparison.OrdinalIgnoreCase));
     }
 
     private void OnConnectionStateChanged(object? sender, EventArgs e)

@@ -130,6 +130,12 @@
   <data name="Settings.ReconnectRequested" xml:space="preserve">
     <value>正在重建连接…</value>
   </data>
+  <data name="Settings.RefreshBle" xml:space="preserve">
+    <value>刷新</value>
+  </data>
+  <data name="Settings.BleRefreshed" xml:space="preserve">
+    <value>已刷新 BLE 设备列表（{0} 个）</value>
+  </data>
   <data name="Settings.Language" xml:space="preserve">
     <value>语言</value>
   </data>
@@ -200,7 +206,7 @@
     <value>波特率</value>
   </data>
   <data name="Row.BleName" xml:space="preserve">
-    <value>BLE 设备名</value>
+    <value>BLE 设备（按 MAC 定位）</value>
   </data>
   <data name="Row.BlePoll" xml:space="preserve">
     <value>连接轮询（秒）</value>
@@ -220,8 +226,8 @@
   <data name="Row.Autostart" xml:space="preserve">
     <value>开机自启</value>
   </data>
-  <data name="Row.UserDataLocation" xml:space="preserve">
-    <value>用户数据位置</value>
+  <data name="Row.LogLocation" xml:space="preserve">
+    <value>日志存放位置</value>
   </data>
   <data name="Row.LogEnabled" xml:space="preserve">
     <value>日志记录</value>
@@ -370,9 +376,6 @@
   <data name="About.Title" xml:space="preserve">
     <value>关于</value>
   </data>
-  <data name="About.Subtitle" xml:space="preserve">
-    <value>单进程风扇控制（UI + 托盘 + 后台监控）</value>
-  </data>
   <data name="About.Libraries" xml:space="preserve">
     <value>引用库</value>
   </data>
@@ -383,10 +386,10 @@
     <value>开源地址</value>
   </data>
   <data name="About.SourceLink" xml:space="preserve">
-    <value>anlerways/Bluetooth-FanControl</value>
+    <value>anlerway/Bluetooth-FanControl</value>
   </data>
   <data name="About.SourceFirmware" xml:space="preserve">
-    <value>anlerways/ESP32-LaptopFan（固件）</value>
+    <value>anlerway/ESP32-LaptopFan（固件）</value>
   </data>
   <data name="About.SourcePending" xml:space="preserve">
     <value>GitHub 仓库地址将在发布时补充。</value>

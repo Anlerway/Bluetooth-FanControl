@@ -224,9 +224,17 @@
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="{loc:Translate Row.BleName}" Style="{StaticResource RowLabel}" />
-                        <ComboBox x:Name="BleBox" Grid.Column="1" Style="{StaticResource ComboStyle}" />
+                        <ComboBox x:Name="BleBox" Grid.Column="1" Style="{StaticResource ComboStyle}" Width="210" />
+                        <Button x:Name="BleRefreshButton" Grid.Column="2"
+                                Content="{loc:Translate Settings.RefreshBle}"
+                                Style="{StaticResource SecondaryButtonStyle}"
+                                Click="RefreshBle_Click"
+                                Padding="12,6"
+                                Margin="10,0,0,0"
+                                VerticalAlignment="Center" />
                     </Grid>
                     <Grid Margin="0,6">
                         <Grid.ColumnDefinitions>
@@ -314,7 +322,7 @@
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="{loc:Translate Row.UserDataLocation}" Style="{StaticResource RowLabel}" />
+                        <TextBlock Text="{loc:Translate Row.LogLocation}" Style="{StaticResource RowLabel}" />
                         <ComboBox x:Name="LogLocationCombo" Grid.Column="1" Style="{StaticResource ComboStyle}" />
                     </Grid>
                     <Grid Margin="0,6">

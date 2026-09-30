@@ -25,6 +25,11 @@ public sealed record AppConfig
 
     public int ComBaudRate { get; init; } = 115200;
 
+    // BLE 设备定位主键：蓝牙 MAC 地址（AA:BB:CC:DD:EE:FF，统一大写冒号分隔）
+    // 名称仅用于界面显示，不作为定位依据（同名设备会选错）
+    public string BleDeviceMac { get; init; } = string.Empty;
+
+    // BLE 设备名（仅显示用；旧配置只有名称时仍作为回退定位依据）
     public string BleDeviceName { get; init; } = string.Empty;
 
     // 温度采样轮询：0.1-5 秒
