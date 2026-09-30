@@ -1,10 +1,11 @@
 # FanControl release packaging script (four distribution flavors)
 # ------------------------------------------------------------------
-# Outputs:
-#   Zip  - self-contained   artifacts\release\FanControl-1.2.0-selfcontained-win-x64.zip
-#   Zip  - needs .NET 8     artifacts\release\FanControl-1.2.0-framework-win-x64.zip
-#   Setup- self-contained   artifacts\installer\FanControl-Setup-Full-1.2.0.exe
-#   Setup- needs .NET 8     artifacts\installer\FanControl-Setup-Slim-1.2.0.exe
+# Outputs (names come from package-names.txt, which is UTF-8 so the Chinese
+# labels survive; this script itself stays ASCII-only for Windows PowerShell):
+#   zip   self-contained : <ReleaseRoot>\FanControl-v1.2.0-<label>.zip
+#   zip   needs .NET 8   : <ReleaseRoot>\FanControl-v1.2.0-<label>.zip
+#   setup self-contained : <InstallerRoot>\FanControl-v1.2.0-<label>.exe
+#   setup needs .NET 8   : <InstallerRoot>\FanControl-v1.2.0-<label>.exe
 #
 # Usage:
 #   powershell -NoProfile -ExecutionPolicy Bypass -File FanControl.Installer\_build-release.ps1
@@ -20,6 +21,7 @@ param(
     [string]$Project = "$PSScriptRoot\..\FanControl.UI\FanControl.UI.csproj",
     [string]$ReleaseRoot = "$PSScriptRoot\..\artifacts\release",
     [string]$InstallerRoot = "$PSScriptRoot\..\artifacts\installer",
+    [string]$NamesFile = "$PSScriptRoot\package-names.txt",
     [string]$Iscc = 'D:\APP\Inno Setup 6\ISCC.exe'
 )
 
@@ -27,6 +29,28 @@ $ErrorActionPreference = 'Stop'
 $Project = (Resolve-Path $Project).Path
 $ReleaseRoot = [System.IO.Path]::GetFullPath($ReleaseRoot)
 $InstallerRoot = [System.IO.Path]::GetFullPath($InstallerRoot)
+
+# --- package names (UTF-8 file, {0} = version) ----------------------
+function Get-PackageNames {
+    param([string]$Path, [string]$Version)
+
+    $names = @{}
+    foreach ($line in [System.IO.File]::ReadAllLines($Path, [System.Text.Encoding]::UTF8)) {
+        $trimmed = $line.Trim()
+        if ($trimmed.Length -eq 0 -or $trimmed.StartsWith('#')) { continue }
+        $parts = $trimmed.Split('=', 2)
+        if ($parts.Length -ne 2) { continue }
+        $names[$parts[0].Trim()] = $parts[1].Trim().Replace('{0}', $Version)
+    }
+
+    foreach ($required in @('zip-selfcontained', 'zip-framework', 'setup-selfcontained', 'setup-framework')) {
+        if (-not $names.ContainsKey($required)) { throw "package-names.txt is missing key: $required" }
+    }
+
+    return $names
+}
+
+$packageNames = Get-PackageNames -Path $NamesFile -Version $Version
 
 Write-Host "== FanControl $Version release packaging ==" -ForegroundColor Cyan
 Write-Host "Project: $Project"
@@ -69,6 +93,22 @@ function New-ZipPackage {
     Write-Host ("   ok: {0} MB" -f $size)
 }
 
+function Invoke-Iscc {
+    param(
+        [string]$Compiler,
+        [string]$Script,
+        [string]$SourceDir,
+        [string]$Name,
+        [string]$OutDir
+    )
+
+    Write-Host "`n-- installer [$Name]" -ForegroundColor Yellow
+    # Chinese package names survive because PowerShell hands them to the native
+    # ISCC process as UTF-16 through CreateProcess
+    & $Compiler $Script "/DAppSource=$SourceDir" "/DOutputName=$Name" "/DOutputDir=$OutDir" | Out-Null
+    if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed: $Name (exit $LASTEXITCODE)" }
+}
+
 # 1) two application builds -----------------------------------------
 $selfContainedDir = Join-Path $ReleaseRoot 'selfcontained'
 $frameworkDir = Join-Path $ReleaseRoot 'framework'
@@ -77,26 +117,25 @@ Invoke-Publish -Name 'self-contained' -OutDir $selfContainedDir -SelfContained $
 Invoke-Publish -Name 'framework-dependent (.NET 8 required)' -OutDir $frameworkDir -SelfContained $false
 
 # 2) two zip packages ------------------------------------------------
-New-ZipPackage -SourceDir $selfContainedDir -ZipPath (Join-Path $ReleaseRoot "FanControl-$Version-selfcontained-$RuntimeIdentifier.zip")
-New-ZipPackage -SourceDir $frameworkDir -ZipPath (Join-Path $ReleaseRoot "FanControl-$Version-framework-$RuntimeIdentifier.zip")
+New-ZipPackage -SourceDir $selfContainedDir -ZipPath (Join-Path $ReleaseRoot $packageNames['zip-selfcontained'])
+New-ZipPackage -SourceDir $frameworkDir -ZipPath (Join-Path $ReleaseRoot $packageNames['zip-framework'])
 
 # 3) two installers (no .NET runtime detection) ----------------------
 if (-not (Test-Path $Iscc)) { throw "Inno Setup compiler not found: $Iscc" }
 if (-not (Test-Path $InstallerRoot)) { New-Item -ItemType Directory -Path $InstallerRoot | Out-Null }
 
 $iss = Join-Path $PSScriptRoot 'installer.iss'
-foreach ($pair in @(
-        @{ Source = $selfContainedDir; Name = "FanControl-Setup-Full-$Version" },
-        @{ Source = $frameworkDir; Name = "FanControl-Setup-Slim-$Version" })) {
-
-    Write-Host "`n-- installer [$($pair.Name)]" -ForegroundColor Yellow
-    & $Iscc $iss "/DAppSource=$($pair.Source)" "/DOutputName=$($pair.Name)" "/DOutputDir=$InstallerRoot"
-    if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed: $($pair.Name) (exit $LASTEXITCODE)" }
-}
+Invoke-Iscc -Compiler $Iscc -Script $iss -SourceDir $selfContainedDir -Name $packageNames['setup-selfcontained'] -OutDir $InstallerRoot
+Invoke-Iscc -Compiler $Iscc -Script $iss -SourceDir $frameworkDir -Name $packageNames['setup-framework'] -OutDir $InstallerRoot
 
 # 4) summary ---------------------------------------------------------
 Write-Host "`n== artifacts ==" -ForegroundColor Cyan
-Get-ChildItem $ReleaseRoot -Filter "FanControl-$Version-*.zip" |
-    ForEach-Object { "{0,-58} {1,8:N1} MB" -f $_.Name, ($_.Length / 1MB) }
-Get-ChildItem $InstallerRoot -Filter "FanControl-Setup-*-$Version.exe" |
-    ForEach-Object { "{0,-58} {1,8:N1} MB" -f $_.Name, ($_.Length / 1MB) }
+foreach ($zip in @($packageNames['zip-selfcontained'], $packageNames['zip-framework'])) {
+    $path = Join-Path $ReleaseRoot $zip
+    if (Test-Path $path) { Write-Host ("{0,-62} {1,8:N1} MB" -f $zip, ((Get-Item $path).Length / 1MB)) }
+}
+
+foreach ($setup in @($packageNames['setup-selfcontained'], $packageNames['setup-framework'])) {
+    $path = Join-Path $InstallerRoot ($setup + '.exe')
+    if (Test-Path $path) { Write-Host ("{0,-62} {1,8:N1} MB" -f ($setup + '.exe'), ((Get-Item $path).Length / 1MB)) }
+}

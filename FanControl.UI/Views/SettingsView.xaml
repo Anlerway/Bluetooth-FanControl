@@ -322,7 +322,7 @@
                             <ColumnDefinition Width="Auto" />
                             <ColumnDefinition Width="*" />
                         </Grid.ColumnDefinitions>
-                        <TextBlock Text="{loc:Translate Row.LogLocation}" Style="{StaticResource RowLabel}" />
+                        <TextBlock Text="{loc:Translate Row.UserDataLocation}" Style="{StaticResource RowLabel}" />
                         <ComboBox x:Name="LogLocationCombo" Grid.Column="1" Style="{StaticResource ComboStyle}" />
                     </Grid>
                     <Grid Margin="0,6">

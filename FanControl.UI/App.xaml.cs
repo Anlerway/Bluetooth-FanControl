@@ -130,7 +130,7 @@ public partial class App : Application
             args.SetObserved();
         };
 
-        // 系统配置（日志位置/开关）先于日志系统读取：首启（无 system.json）弹窗引导选择，
+        // 系统配置（用户数据位置/日志开关）先于日志系统读取：首启（无 system.json）弹窗引导选择，
         // 之后可在设置页修改并立即生效。
         SystemConfig systemConfig;
         var earlyConfigManager = new ConfigManager(NullLogger<ConfigManager>.Instance);
@@ -300,7 +300,7 @@ public partial class App : Application
     /// <summary>首启引导弹窗：选择日志文件存放位置（data / 安装目录）。</summary>
     private static SystemConfig? ShowFirstStartLogLocationDialog(ConfigManager configManager)
     {
-        var dialog = new LogLocationDialog(configManager.InstallDirectory, configManager.DefaultUserDataDirectory)
+        var dialog = new LogLocationDialog(configManager.InstallDirectory, configManager.AppDataRoot)
         {
             WindowStartupLocation = WindowStartupLocation.CenterScreen,
         };

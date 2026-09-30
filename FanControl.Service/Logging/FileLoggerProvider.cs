@@ -117,7 +117,8 @@ public sealed class FileLoggerProvider : ILoggerProvider
 
         public bool IsEnabled(LogLevel logLevel)
         {
-            return logLevel >= LogLevel.Information;
+            // 仅保留关键日志：Warning / Error / Critical，降低日常日志噪音
+            return logLevel >= LogLevel.Warning;
         }
 
         public void Log<TState>(

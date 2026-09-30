@@ -286,7 +286,7 @@ public partial class SettingsView : UserControl
             LangCombo.SelectedIndex = LocalizationManager.CurrentLanguage == "en-US" ? 1 : 0;
             UnitCombo.SelectedIndex = _config.TemperatureUnit == TemperatureUnit.Fahrenheit ? 1 : 0;
             LogLocationCombo.SelectedIndex =
-                _systemConfig.LogLocation == ConfigLocation.InstallDirectory ? 1 : 0;
+                _systemConfig.UserDataLocation == ConfigLocation.ExeDirectory ? 1 : 0;
             LogToggle.IsChecked = _systemConfig.LogEnabled;
             StatusText.Text = LocalizationManager.Get("Settings.Loaded");
         }
@@ -335,9 +335,9 @@ public partial class SettingsView : UserControl
 
             var systemUpdated = _systemConfig with
             {
-                LogLocation = LogLocationCombo.SelectedIndex == 1
-                    ? ConfigLocation.InstallDirectory
-                    : ConfigLocation.UserData,
+                UserDataLocation = LogLocationCombo.SelectedIndex == 1
+                    ? ConfigLocation.ExeDirectory
+                    : ConfigLocation.AppData,
                 LogEnabled = LogToggle.IsChecked == true,
             };
             await _runtime.SaveSystemConfigAsync(systemUpdated);
@@ -562,8 +562,7 @@ public partial class SettingsView : UserControl
         string? configuredName = null)
     {
         var items = new List<BleDeviceInfo>();
-        var devices = await BleDeviceScanner.EnumerateAsync();
-        items.AddRange(devices);
+        items.AddRange(await BleDeviceScanner.EnumerateAsync());
 
         var mac = configuredMac ?? string.Empty;
         var name = configuredName ?? string.Empty;

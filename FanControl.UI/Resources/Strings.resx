@@ -226,8 +226,8 @@
   <data name="Row.Autostart" xml:space="preserve">
     <value>开机自启</value>
   </data>
-  <data name="Row.LogLocation" xml:space="preserve">
-    <value>日志存放位置</value>
+  <data name="Row.UserDataLocation" xml:space="preserve">
+    <value>用户数据位置</value>
   </data>
   <data name="Row.LogEnabled" xml:space="preserve">
     <value>日志记录</value>

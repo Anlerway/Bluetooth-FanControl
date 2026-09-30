@@ -18,7 +18,6 @@ public class ContractSerializationTests
             FanSpeedSource = FanSpeedSource.AtkAcpi,
             FanControlMode = FanControlMode.Mixed,
             CommunicationType = CommunicationType.Ble,
-            BleDeviceMac = "AA:BB:CC:DD:EE:FF",
             BleDeviceName = "ESP32-Fan",
             Theme = ThemeType.Dark,
             Curve = new List<CurvePoint> { new(25, 10), new(80, 90) },
@@ -36,7 +35,6 @@ public class ContractSerializationTests
         Assert.Equal(config.FanControlMode, restored.FanControlMode);
         Assert.Equal(config.CommunicationType, restored.CommunicationType);
         Assert.Equal(config.BleDeviceName, restored.BleDeviceName);
-        Assert.Equal(config.BleDeviceMac, restored.BleDeviceMac);
         Assert.Equal(config.Theme, restored.Theme);
         Assert.True(config.Curve.SequenceEqual(restored.Curve));
         Assert.True(config.RpmCurve.SequenceEqual(restored.RpmCurve));
@@ -72,8 +70,8 @@ public class ContractSerializationTests
     {
         var config = new SystemConfig
         {
-            ConfigLocation = ConfigLocation.InstallDirectory,
-            UserDataDirectory = @"D:\FanControl\data",
+            UserDataLocation = ConfigLocation.ExeDirectory,
+            LogEnabled = false,
         };
 
         var restored = JsonSerializer.Deserialize<SystemConfig>(

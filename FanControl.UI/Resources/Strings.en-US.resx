@@ -226,8 +226,8 @@
   <data name="Row.Autostart" xml:space="preserve">
     <value>Run on startup</value>
   </data>
-  <data name="Row.LogLocation" xml:space="preserve">
-    <value>Log location</value>
+  <data name="Row.UserDataLocation" xml:space="preserve">
+    <value>User data location</value>
   </data>
   <data name="Row.LogEnabled" xml:space="preserve">
     <value>Write logs</value>
