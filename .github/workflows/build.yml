@@ -19,17 +19,21 @@ jobs:
         with:
           dotnet-version: '8.0.x'
 
+      # 还原整个解决方案：测试项目不在主程序的引用链里，
+      # 只还原 FanControl.UI 会导致 tests 缺少 project.assets.json
       - name: Restore
-        run: dotnet restore FanControl.UI\FanControl.UI.csproj
+        run: dotnet restore FanControl.slnx
 
       - name: Build
-        run: dotnet build FanControl.UI\FanControl.UI.csproj -c Release --no-restore
+        run: dotnet build FanControl.slnx -c Release --no-restore
 
       - name: Test
         run: dotnet test tests\FanControl.Tests\FanControl.Tests.csproj -c Release --no-restore
 
+      # 主程序为 WPF，不再使用 WindowsAppSDK 相关参数；
+      # 与本地打包一致：普通目录发布，不做单文件打包
       - name: Publish (self-contained portable)
-        run: dotnet publish FanControl.UI\FanControl.UI.csproj -c Release -r win-x64 --self-contained true -p:WindowsAppSDKSelfContained=true -o artifacts\portable
+        run: dotnet publish FanControl.UI\FanControl.UI.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -p:PublishReadyToRun=false -o artifacts\portable
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
