@@ -1,5 +1,6 @@
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Threading;
 using FanControl.Service.Host;
 using FanControl.Shared.Models;
 using FanControl.UI.Controls;
@@ -17,10 +18,21 @@ public partial class CurveEditorView : UserControl
     private bool _isRpmCurve;
     private bool _chartInitialized;
 
+    private readonly DispatcherTimer _autoSaveTimer;
+    private bool _suppressAutoSave;
+
     public CurveEditorView(FanControlRuntime runtime)
     {
         _runtime = runtime;
         InitializeComponent();
+
+        // 曲线改动后自动保存，避免"编辑了但没点保存 → 实际仍在跑旧曲线"的不一致
+        _autoSaveTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(500) };
+        _autoSaveTimer.Tick += async (_, _) =>
+        {
+            _autoSaveTimer.Stop();
+            await TrySaveAsync(auto: true);
+        };
 
         CurveCombo.ItemsSource = new[]
         {
@@ -34,6 +46,7 @@ public partial class CurveEditorView : UserControl
         {
             RefreshSelectedInfo();
             SyncChartToChart();
+            MarkDirty();
         };
 
         Loaded += (_, _) =>
@@ -50,16 +63,37 @@ public partial class CurveEditorView : UserControl
 
     private void LoadPoints()
     {
-        _tempPoints.Clear();
-        _tempPoints.AddRange(
-            _runtime.CurrentConfig.Curve.Select(p => new EditablePoint(p.TemperatureCelsius, p.PwmPercent)));
-        _rpmPoints.Clear();
-        _rpmPoints.AddRange(
-            _runtime.CurrentConfig.RpmCurve.Select(p => new EditablePoint(p.Rpm, p.PwmPercent)));
+        _suppressAutoSave = true;
+        try
+        {
+            _tempPoints.Clear();
+            _tempPoints.AddRange(
+                _runtime.CurrentConfig.Curve.Select(p => new EditablePoint(p.TemperatureCelsius, p.PwmPercent)));
+            _rpmPoints.Clear();
+            _rpmPoints.AddRange(
+                _runtime.CurrentConfig.RpmCurve.Select(p => new EditablePoint(p.Rpm, p.PwmPercent)));
 
-        ShowCurve(isRpm: false);
-        CurveCombo.SelectedIndex = 0;
+            ShowCurve(isRpm: false);
+            CurveCombo.SelectedIndex = 0;
+        }
+        finally
+        {
+            _suppressAutoSave = false;
+        }
+
         StatusText.Text = LocalizationManager.Get("Settings.Loaded");
+    }
+
+    /// <summary>改动后延迟自动保存（与设置页一致），避免编辑未落盘却以为已生效。</summary>
+    private void MarkDirty()
+    {
+        if (_suppressAutoSave || !_initialized)
+        {
+            return;
+        }
+
+        _autoSaveTimer.Stop();
+        _autoSaveTimer.Start();
     }
 
     private void Add_Click(object sender, RoutedEventArgs e)
@@ -103,8 +137,16 @@ public partial class CurveEditorView : UserControl
         StatusText.Text = LocalizationManager.Get("Curve.ResetDone");
     }
 
-    private async void Save_Click(object sender, RoutedEventArgs e)
+    private async void Save_Click(object sender, RoutedEventArgs e) => await TrySaveAsync(auto: false);
+
+    /// <param name="auto">自动保存时曲线暂时不合法（如拖动中重复温度点）只跳过、不报错。</param>
+    private async Task TrySaveAsync(bool auto)
     {
+        if (_syncing)
+        {
+            return;
+        }
+
         try
         {
             CommitCurrent();
@@ -122,7 +164,11 @@ public partial class CurveEditorView : UserControl
             {
                 if (temperaturePoints[i].TemperatureCelsius <= temperaturePoints[i - 1].TemperatureCelsius)
                 {
-                    StatusText.Text = LocalizationManager.Get("Curve.SaveFail");
+                    if (!auto)
+                    {
+                        StatusText.Text = LocalizationManager.Get("Curve.SaveFail");
+                    }
+
                     return;
                 }
             }
@@ -131,7 +177,11 @@ public partial class CurveEditorView : UserControl
             {
                 if (rpmPoints[i].Rpm <= rpmPoints[i - 1].Rpm)
                 {
-                    StatusText.Text = LocalizationManager.Get("Curve.SaveFail");
+                    if (!auto)
+                    {
+                        StatusText.Text = LocalizationManager.Get("Curve.SaveFail");
+                    }
+
                     return;
                 }
             }
@@ -139,17 +189,22 @@ public partial class CurveEditorView : UserControl
             // 防止误把空曲线保存覆盖已有曲线
             if (temperaturePoints.Count == 0 || rpmPoints.Count == 0)
             {
-                StatusText.Text = LocalizationManager.Get("Curve.SaveFail");
+                if (!auto)
+                {
+                    StatusText.Text = LocalizationManager.Get("Curve.SaveFail");
+                }
+
                 return;
             }
 
+            // 以运行时最新配置为基线，避免覆盖其它页面刚保存的设置
             await _runtime.ApplyConfigAsync(
                 _runtime.CurrentConfig with
                 {
                     Curve = temperaturePoints,
                     RpmCurve = rpmPoints,
                 });
-            StatusText.Text = LocalizationManager.Get("Curve.Saved");
+            StatusText.Text = LocalizationManager.Get(auto ? "Curve.AutoSaved" : "Curve.Saved");
         }
         catch (Exception ex)
         {
@@ -251,9 +306,18 @@ public partial class CurveEditorView : UserControl
         }
 
         _isRpmCurve = isRpm;
-        Chart.SetRpmMode(isRpm);
-        Chart.SetPoints(isRpm ? _rpmPoints : _tempPoints);
-        _chartInitialized = true;
+        _suppressAutoSave = true;
+        try
+        {
+            Chart.SetRpmMode(isRpm);
+            Chart.SetPoints(isRpm ? _rpmPoints : _tempPoints);
+            _chartInitialized = true;
+        }
+        finally
+        {
+            _suppressAutoSave = false;
+        }
+
         RefreshList();
     }
 

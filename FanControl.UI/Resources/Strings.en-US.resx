@@ -355,6 +355,9 @@
   <data name="Curve.Saved" xml:space="preserve">
     <value>Saved and applied</value>
   </data>
+  <data name="Curve.AutoSaved" xml:space="preserve">
+    <value>Auto-saved and applied</value>
+  </data>
   <data name="Curve.Selected" xml:space="preserve">
     <value>Selected: {0} °C / {1} %</value>
   </data>

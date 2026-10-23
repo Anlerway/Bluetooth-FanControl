@@ -304,7 +304,9 @@ public partial class SettingsView : UserControl
     {
         try
         {
-            var updated = _config with
+            // 基线用运行时最新配置：本页只覆盖自己编辑的字段，不能用加载时的旧快照，
+            // 否则会把曲线编辑器（或其它页面）刚保存的 Curve/RpmCurve 回滚
+            var updated = _runtime.CurrentConfig with
             {
                 TemperatureSource = ValueAt(SourceValues, SourceCombo.SelectedIndex),
                 GpuTemperatureSource = ValueAt(GpuSourceValues, GpuSourceCombo.SelectedIndex),
