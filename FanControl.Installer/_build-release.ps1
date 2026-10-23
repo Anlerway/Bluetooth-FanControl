@@ -2,10 +2,10 @@
 # ------------------------------------------------------------------
 # Outputs (names come from package-names.txt, which is UTF-8 so the Chinese
 # labels survive; this script itself stays ASCII-only for Windows PowerShell):
-#   zip   self-contained : <ReleaseRoot>\FanControl-v1.2.0-<label>.zip
-#   zip   needs .NET 8   : <ReleaseRoot>\FanControl-v1.2.0-<label>.zip
-#   setup self-contained : <InstallerRoot>\FanControl-v1.2.0-<label>.exe
-#   setup needs .NET 8   : <InstallerRoot>\FanControl-v1.2.0-<label>.exe
+#   zip   self-contained : <ReleaseRoot>\FanControl-v1.3.0-<label>.zip
+#   zip   needs .NET 8   : <ReleaseRoot>\FanControl-v1.3.0-<label>.zip
+#   setup self-contained : <InstallerRoot>\FanControl-v1.3.0-<label>.exe
+#   setup needs .NET 8   : <InstallerRoot>\FanControl-v1.3.0-<label>.exe
 #
 # Usage:
 #   powershell -NoProfile -ExecutionPolicy Bypass -File FanControl.Installer\_build-release.ps1
@@ -15,7 +15,7 @@
 # runtime (see installer.iss).
 
 param(
-    [string]$Version = '1.2.0',
+    [string]$Version = '1.3.0',
     [string]$Configuration = 'Release',
     [string]$RuntimeIdentifier = 'win-x64',
     [string]$Project = "$PSScriptRoot\..\FanControl.UI\FanControl.UI.csproj",

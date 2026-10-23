@@ -270,8 +270,8 @@ public partial class SettingsView : UserControl
             BleBox.SelectedItem = FindBleItem(bleItems, _config.BleDeviceMac, _config.BleDeviceName);
             PollSlider.Value = Math.Clamp(_config.PollIntervalMilliseconds / 1000.0, 0.1, 5);
             PollValue.Text = $"{PollSlider.Value:0.0}";
-            SmoothSlider.Value = Math.Clamp(_config.PwmSmoothing, 0.1, 1);
-            SmoothValue.Text = $"{SmoothSlider.Value:0.00}";
+            SmoothSlider.Value = Math.Clamp(_config.PwmSmoothingWindowSeconds, 0.5, 30);
+            SmoothValue.Text = $"{SmoothSlider.Value:0.0} s";
             SmoothToggle.IsChecked = _config.SmoothingEnabled;
             SmoothSlider.IsEnabled = _config.SmoothingEnabled;
             BlePollSlider.Value = Math.Clamp(_config.BlePollIntervalSeconds, 1, 30);
@@ -318,7 +318,7 @@ public partial class SettingsView : UserControl
                 BleDeviceName = (BleBox.SelectedItem as BleDeviceInfo)?.Name ?? string.Empty,
                 ManualPwmPercent = ManualSlider.Value,
                 PollIntervalMilliseconds = (int)Math.Round(PollSlider.Value * 1000),
-                PwmSmoothing = SmoothSlider.Value,
+                PwmSmoothingWindowSeconds = SmoothSlider.Value,
                 SmoothingEnabled = SmoothToggle.IsChecked == true,
                 BlePollIntervalSeconds = (int)Math.Round(BlePollSlider.Value),
                 BleReconnectIntervalSeconds = (int)Math.Round(BleReconnectSlider.Value),
@@ -485,7 +485,7 @@ public partial class SettingsView : UserControl
             return;
         }
 
-        SmoothValue.Text = $"{SmoothSlider.Value:0.00}";
+        SmoothValue.Text = $"{SmoothSlider.Value:0.0} s";
     }
 
     private void SmoothToggle_Checked(object sender, RoutedEventArgs e)

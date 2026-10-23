@@ -124,8 +124,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File FanControl.Installer\_build-
 
 | 形态 | 自带运行库（免装 .NET） | 需 .NET 8 |
 | --- | --- | --- |
-| 免安装压缩包 | `artifacts\release\FanControl-1.2.0-selfcontained-win-x64.zip` | `artifacts\release\FanControl-1.2.0-framework-win-x64.zip` |
-| 安装包 | `artifacts\installer\FanControl-Setup-Full-1.2.0.exe` | `artifacts\installer\FanControl-Setup-Slim-1.2.0.exe` |
+| 免安装压缩包 | `artifacts\release\FanControl-1.3.0-selfcontained-win-x64.zip` | `artifacts\release\FanControl-1.3.0-framework-win-x64.zip` |
+| 安装包 | `artifacts\installer\FanControl-Setup-Full-1.3.0.exe` | `artifacts\installer\FanControl-Setup-Slim-1.3.0.exe` |
 
 > 安装包阶段**不检测** .NET 运行环境，避免未装 .NET 的机器直接安装失败；需环境版装好后由程序自身提示。
 

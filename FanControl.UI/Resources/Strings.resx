@@ -191,7 +191,7 @@
     <value>风扇转速平滑</value>
   </data>
   <data name="Row.Smooth" xml:space="preserve">
-    <value>风扇平滑系数</value>
+    <value>风扇平滑窗口</value>
   </data>
   <data name="Card.Comm" xml:space="preserve">
     <value>通信</value>

@@ -1,0 +1,7 @@
+# FanControl 发行包文件名（UTF-8 编码；{0} 会被替换为版本号）
+# _build-release.ps1 读取本文件生成产物名；四个键缺一不可。
+# 安装包名不带 .exe，脚本会自动追加。
+zip-selfcontained=FanControl-{0}-selfcontained-win-x64.zip
+zip-framework=FanControl-{0}-framework-win-x64.zip
+setup-selfcontained=FanControl-Setup-Full-{0}
+setup-framework=FanControl-Setup-Slim-{0}

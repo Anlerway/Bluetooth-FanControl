@@ -183,10 +183,10 @@
                             <ColumnDefinition Width="Auto" />
                         </Grid.ColumnDefinitions>
                         <TextBlock Text="{loc:Translate Row.Smooth}" Style="{StaticResource RowLabel}" />
-                        <Slider x:Name="SmoothSlider" Grid.Column="1" Margin="12,0" Minimum="0.1" Maximum="1"
-                                TickFrequency="0.05" IsSnapToTickEnabled="True"
+                        <Slider x:Name="SmoothSlider" Grid.Column="1" Margin="12,0" Minimum="0.5" Maximum="30"
+                                TickFrequency="0.5" IsSnapToTickEnabled="True"
                                 VerticalAlignment="Center" ValueChanged="SmoothSlider_ValueChanged" />
-                        <TextBlock x:Name="SmoothValue" Grid.Column="2" Text="0.5" Width="52" TextAlignment="Right"
+                        <TextBlock x:Name="SmoothValue" Grid.Column="2" Text="3.0 s" Width="52" TextAlignment="Right"
                                    Foreground="{DynamicResource TextSecondaryBrush}" VerticalAlignment="Center" />
                     </Grid>
                 </StackPanel>

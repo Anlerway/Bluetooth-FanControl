@@ -56,7 +56,7 @@ public class ContractSerializationTests
         Assert.Equal(2, config.BlePollIntervalSeconds);
         Assert.Equal(5, config.BleReconnectIntervalSeconds);
         Assert.True(config.AutoReconnectBle);
-        Assert.Equal(0.5, config.PwmSmoothing);
+        Assert.Equal(3.0, config.PwmSmoothingWindowSeconds);
         Assert.True(config.SmoothingEnabled);
         Assert.True(config.NotifyOnBleDisconnect);
         Assert.True(config.NotifyOnTemperatureError);

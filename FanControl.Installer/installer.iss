@@ -1,24 +1,24 @@
 ; FanControl Inno Setup installer script
 ; 四个发行版本中的两个安装包共用此脚本（仅 AppSource / OutputName 不同）：
-;   ISCC.exe installer.iss /DAppSource="...\selfcontained" /DOutputName="FanControl-Setup-Full-1.2.0"
-;   ISCC.exe installer.iss /DAppSource="...\framework"     /DOutputName="FanControl-Setup-Slim-1.2.0"
+;   ISCC.exe installer.iss /DAppSource="...\selfcontained" /DOutputName="FanControl-Setup-Full-1.3.0"
+;   ISCC.exe installer.iss /DAppSource="...\framework"     /DOutputName="FanControl-Setup-Slim-1.3.0"
 ;
 ; 注意：安装阶段不检测 .NET 运行环境。
 ; “需环境版”装到未安装 .NET 8 的机器上依然可以正常安装，由程序首次启动时自行提示。
 
 #define MyAppName "FanControl"
-#define MyAppVersion "1.2.0"
+#define MyAppVersion "1.3.0"
 #define MyAppPublisher "anlerway"
 #define MyAppExeName "FanControl.exe"
 
 #ifndef AppSource
-  #define AppSource "D:\PROJECT\CODEX\FAN\artifacts\release\selfcontained"
+  #define AppSource "..\artifacts\release\selfcontained"
 #endif
 #ifndef OutputName
   #define OutputName "FanControl-Setup-Full"
 #endif
 #ifndef OutputDir
-  #define OutputDir "D:\PROJECT\CODEX\FAN\artifacts\installer"
+  #define OutputDir "..\artifacts\installer"
 #endif
 
 [Setup]
@@ -44,7 +44,7 @@ VersionInfoDescription={#MyAppName} {#MyAppVersion} Setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-SetupIconFile=D:\PROJECT\CODEX\FAN\FanControl.UI\app.ico
+SetupIconFile=..\FanControl.UI\app.ico
 UninstallDisplayIcon={app}\FanControl.exe
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible

@@ -44,8 +44,9 @@ public sealed record AppConfig
     // 自动重连开关（COM 与 BLE 共用）
     public bool AutoReconnectBle { get; init; } = true;
 
-    // 风扇平滑系数：0.1-1.0（1.0 = 无平滑），抑制温度剧烈波动导致的转速抖动
-    public double PwmSmoothing { get; init; } = 0.5;
+    // 风扇平滑窗口（秒）：记录最近这段时间内的目标 PWM 并取时间加权平均，
+    // 抑制温度剧烈波动导致的转速抖动；窗口越大越平缓、跟随越慢（0 = 不平滑）
+    public double PwmSmoothingWindowSeconds { get; init; } = 3.0;
 
     // 通知开关
     public bool NotifyOnBleDisconnect { get; init; } = true;

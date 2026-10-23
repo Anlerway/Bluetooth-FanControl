@@ -191,7 +191,7 @@
     <value>Fan smoothing</value>
   </data>
   <data name="Row.Smooth" xml:space="preserve">
-    <value>Fan smoothing</value>
+    <value>Smoothing window</value>
   </data>
   <data name="Card.Comm" xml:space="preserve">
     <value>Communication</value>

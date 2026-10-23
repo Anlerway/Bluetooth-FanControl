@@ -38,7 +38,11 @@ public sealed class FanControlRuntime : IAsyncDisposable
     private Task? _communicationTask;
     private bool _autoFallbackDone;
     private int _lastLoggedInterval = -1;
-    private double? _smoothedPwm;
+
+    // 时间基准：平滑按"记录一段时间内的目标值"计算，因此用单调时钟累计秒数，
+    // 不受系统时间调整影响；采样循环与通信循环同进程，仅在采样循环内访问。
+    private readonly Stopwatch _clock = Stopwatch.StartNew();
+    private readonly PwmSmoother _smoother = new();
     private volatile float _latestSmoothedPwm = float.NaN;
     private volatile float _latestCpuCelsius = float.NaN;
     private volatile float _latestGpuCelsius = float.NaN;
@@ -545,7 +549,11 @@ public sealed class FanControlRuntime : IAsyncDisposable
         }
     }
 
-    /// <summary>PWM 指数平滑：温度剧烈波动时转速平缓过渡，系数越小越平滑。</summary>
+    /// <summary>
+    /// PWM 时间窗口平滑：记录最近 PwmSmoothingWindowSeconds 秒内的目标 PWM，
+    /// 输出其时间加权平均，温度剧烈波动时转速平缓过渡。
+    /// 平滑强度只由窗口秒数决定，与采样间隔无关（采样 100ms 或 5s 效果一致）。
+    /// </summary>
     private double? ApplySmoothing(AppConfig config, double? targetPwm)
     {
         // 无有效目标（null 或 NaN，如温度源无数据）时保持上次平滑值，不污染平滑状态
@@ -557,28 +565,20 @@ public sealed class FanControlRuntime : IAsyncDisposable
         // 平滑开关关闭或手动模式：直接使用目标 PWM，不做平滑
         if (!config.SmoothingEnabled || config.FanControlMode == FanControlMode.Manual)
         {
-            _smoothedPwm = target;
+            _smoother.Reset();
             return target;
         }
 
+        // 切换控制模式/温度源时清空窗口：新通道的目标值与旧通道无可比性，
+        // 继续累积会让切换瞬间的转速缓慢爬行
         if (_lastMode != config.FanControlMode || _lastSource != config.TemperatureSource)
         {
             _lastMode = config.FanControlMode;
             _lastSource = config.TemperatureSource;
-            _smoothedPwm = null;
+            _smoother.Reset();
         }
 
-        var factor = Math.Clamp(config.PwmSmoothing, 0.05, 1.0);
-        if (factor >= 1.0 || _smoothedPwm is null)
-        {
-            _smoothedPwm = target;
-        }
-        else
-        {
-            _smoothedPwm = _smoothedPwm.Value + (target - _smoothedPwm.Value) * factor;
-        }
-
-        return _smoothedPwm;
+        return _smoother.Update(target, _clock.Elapsed.TotalSeconds, config.PwmSmoothingWindowSeconds);
     }
 
     private ITemperatureProvider GetOrCreateProvider(TemperatureSource source)
