@@ -22,15 +22,15 @@
 | --- | --- |
 | ![仪表盘](screenshots/zh1.png) | ![曲线编辑](screenshots/zh2.png) |
 
-| 设置 | 设置 |
+| 设置 | 关于 |
 | --- | --- |
-| ![设置](screenshots/zh3.png) | ![设置](screenshots/zh4.png) |
+| ![设置](screenshots/zh3.png) | ![关于](screenshots/zh4.png) |
 
 ## 简介
 
 在垃圾研究社开源硬件的基础上，针对实际体验做了完整重制：
 
-- **上位机**：WPF 桌面程序，新增自动重连、开机自启、控制面板、更多更自由的温度源获取、可调节的温度-风扇曲线；
+- **上位机**：后台守护进程（C#，常驻托盘）+ 原生界面（C++ / Direct2D，Win11 设置风格），新增自动重连、开机自启、控制面板、更多更自由的温度源获取、可调节的温度-风扇曲线；
 
 ## 功能特性
 
@@ -77,67 +77,76 @@
 
 ## 架构
 
-单进程设计：UI（WPF）与后台监控循环同进程运行，托盘为独立 STA 线程（`Shell_NotifyIcon`），退出时统一释放资源。
+前后台两个进程：
+
+- **后台 `FanControl.Host.exe`**（C#，需管理员）常驻运行，独占采样循环、PWM 计算、BLE/COM 通信、配置落盘与托盘图标；
+- **界面 `FanControl.UI.exe`**（C++20 + Direct2D/DirectWrite，普通权限）按需启动，通过命名管道 `FanControl.Host.v1` 读状态、下发配置；关掉界面风扇照常受控。
 
 ```text
 FanControl.slnx
-├── FanControl.Shared/    # 共享契约：Enums / Models（配置、数据包）
-├── FanControl.Service/   # 类库：采样循环、硬件数据源、通信、配置、托盘
-├── FanControl.UI/        # WPF 主程序
-├── FanControl.Installer/ # Inno Setup 安装脚本
+├── src/
+│   ├── FanControl.Shared/    # 共享契约：Enums / Models（配置、数据包）/ IPC 分帧
+│   ├── FanControl.Service/   # 类库：采样循环、硬件数据源、通信、配置、日志、托盘
+│   ├── FanControl.Host/      # 后台守护进程（C#，常驻，托盘 + 命名管道服务端）
+│   └── FanControl.UI.Cpp/    # 界面（C++20，Direct2D 自绘，Win11 设置风格）
+├── installer/                # Inno Setup 脚本与一键打包脚本
 ├── tests/FanControl.Tests
-└── docs/                 # 架构与通信协议文档
+└── docs/                     # 架构、通信协议与进程间协议文档
 ```
 
 采样链路：`温度数据源（CPU/GPU 独立）→ 控制模式查曲线 → PWM 平滑 → BLE/COM 下发 → OLED 显示`。
+
+状态归属：温度/转速/PWM/连接状态与配置写盘只在后台；界面只管当前页、滚动与曲线草稿。细节见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，管道报文见 [docs/PROTOCOL.md](docs/PROTOCOL.md)。
 
 ## 环境配置
 
 ### 上位机
 
 - Windows 10/11 x64；
-- .NET 8 SDK（8.0.423+）——仅编译源码需要；
-- Inno Setup 6（`D:\APP\Inno Setup 6`，仅打安装包需要）；
-- Visual Studio 2026（可选，命令行编译不需要）。
+- 后台与类库：.NET 8 SDK（8.0.423+）——仅编译源码需要；
+- 界面：MSVC（Visual Studio 2026 生成工具或完整版）+ Windows SDK 10，C++20；
+- Inno Setup 6（`D:\APP\Inno Setup 6`，仅打安装包需要）。
 
 ## 构建
 
-前置：.NET 8 SDK（8.0.423+）。
+前置：.NET 8 SDK（8.0.423+）编译后台；MSVC + Windows SDK 10 编译界面。
 
 ```powershell
-# 类库与测试
-dotnet build FanControl.Shared
-dotnet build FanControl.Service
-dotnet test tests/FanControl.Tests
+# 后台、类库与测试
+dotnet build src\FanControl.Host\FanControl.Host.csproj -c Debug
+dotnet test tests\FanControl.Tests
 
-# 日常调试编译主程序（x64）
-dotnet build FanControl.UI\FanControl.UI.csproj -c Debug -r win-x64
+# 界面（C++）：build.bat 会先 call vcvars64 再调 cl
+cd src\FanControl.UI.Cpp
+build.bat
+# 或用 CMake（VS 自带 cmake）
+cmake -B build -S . && cmake --build build --config Release
 ```
 
-### 一键打四个发行版本
+### 一键打两个发行版本
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File FanControl.Installer\_build-release.ps1
+powershell -NoProfile -ExecutionPolicy Bypass -File installer\_build-release.ps1
 ```
 
-产物输出到**仓库外**的 `..\artifacts\`（可用 `-ReleaseRoot` / `-InstallerRoot` 改），`PublishSingleFile` 关闭，主程序以普通目录形式发布：
+脚本依次：编译 C++ 界面 → `dotnet publish` 后台（两种 flavor）→ 把 `FanControl.UI.exe` 拷进发布目录 → 打 zip → 调 Inno Setup。产物输出到**仓库外**的 `..\..\artifacts\`（可用 `-ReleaseRoot` / `-InstallerRoot` 改）：
 
 | 形态 | 自带运行库（免装 .NET） | 需 .NET 8 |
 | --- | --- | --- |
-| 免安装压缩包 | `..\artifacts\release\FanControl-1.3.0-selfcontained-win-x64.zip` | `..\artifacts\release\FanControl-1.3.0-framework-win-x64.zip` |
-| 安装包 | `..\artifacts\installer\FanControl-Setup-Full-1.3.0.exe` | `..\artifacts\installer\FanControl-Setup-Slim-1.3.0.exe` |
+| 免安装压缩包 | `..\..\artifacts\release\FanControl-1.4.0-selfcontained-win-x64.zip`（约 34 MB） | `..\..\artifacts\release\FanControl-1.4.0-framework-win-x64.zip`（约 2.5 MB） |
+| 安装包 | `..\..\artifacts\installer\FanControl-Setup-Full-1.4.0.exe`（约 27 MB） | `..\..\artifacts\installer\FanControl-Setup-Slim-1.4.0.exe`（约 4 MB） |
 
 > 安装包阶段**不检测** .NET 运行环境，避免未装 .NET 的机器直接安装失败；需环境版装好后由程序自身提示。
+> `_build-release.ps1` 必须保持 **UTF-8 with BOM** 保存：PowerShell 5.1 会把无 BOM 文件里的中文按 GBK 解析，导致参数默认值被吃掉。
 
 ## 运行
 
-解压免安装压缩包或安装后直接运行 `FanControl.exe`：
+解压免安装压缩包或安装后运行 `FanControl.UI.exe`（找不到后台时会按需提权拉起 `FanControl.Host.exe`，也可直接运行后台只留托盘）：
 
-- 主窗口：仪表盘（实时温度/趋势）、设置、曲线编辑器；
-- 托盘：打开主界面 / 开机自启 / 退出；关闭主窗口 = 最小化到托盘，后台监控继续；
-- 手动启动会请求管理员权限（访问硬件传感器），开机自启通过任务计划以最高权限静默运行。
-
-> Service 为纯类库，以用户级权限运行，不需要额外安装服务。
+- 界面：仪表盘（实时温度/趋势）、设置、曲线编辑器、关于；
+- 托盘（属于后台进程）：打开主界面 / 重建连接 / 开机自启 / 退出；关掉界面不影响风扇控制；
+- 后台需要管理员权限（访问硬件传感器），开机自启通过任务计划以最高权限静默运行；
+- 两个 exe 必须放在同一目录（界面从自身目录找后台，后台从自身目录拉起界面）。
 
 ## 数据源说明
 

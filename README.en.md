@@ -20,17 +20,19 @@
 
 | Dashboard | Curve editor |
 | --- | --- |
-| ![Dashboard](screenshots/en1.png) | ![Curve editor](screenshots/en2.png) |
+| ![Dashboard](screenshots/zh1.png) | ![Curve editor](screenshots/zh2.png) |
 
-| Settings | Settings |
+| Settings | About |
 | --- | --- |
-| ![Settings](screenshots/en3.png) | ![Settings](screenshots/en4.png) |
+| ![Settings](screenshots/zh3.png) | ![About](screenshots/zh4.png) |
+
+> The UI is currently Chinese-only (the localization layer went away with the old WPF front end).
 
 ## Overview
 
 A full remake built on top of the 垃圾研究社 open-source hardware:
 
-- **Host app**: WPF desktop app, adding auto-reconnect, auto-start, a control dashboard, more flexible temperature sources, and adjustable temperature-fan curves;
+- **Host app**: a resident background daemon (C#, tray + hardware access) plus a native UI (C++ / Direct2D, Windows 11 Settings look), adding auto-reconnect, auto-start, a control dashboard, more flexible temperature sources, and adjustable temperature-fan curves;
 
 ## Features
 
@@ -77,58 +79,75 @@ A full remake built on top of the 垃圾研究社 open-source hardware:
 
 ## Architecture
 
-Single-process design: the UI (WPF) and background monitoring run in the same process; the tray uses `Shell_NotifyIcon` on its own STA thread; resources are released together on exit.
+Two processes:
+
+- **`FanControl.Host.exe`** (C#, administrator) runs resident and owns the sampling loop, PWM computation, BLE/COM communication, config persistence and the tray icon;
+- **`FanControl.UI.exe`** (C++20 + Direct2D/DirectWrite, standard user) is started on demand and talks to the daemon over the `FanControl.Host.v1` named pipe; closing the UI leaves fan control running.
 
 ```text
 FanControl.slnx
-├── FanControl.Shared/    # Shared contracts: enums / models (config, data packets)
-├── FanControl.Service/   # Library: sampling loop, hardware sources, communication, config, tray
-├── FanControl.UI/        # WPF main app
-├── FanControl.Installer/ # Inno Setup installer script
+├── src/
+│   ├── FanControl.Shared/    # Shared contracts: enums / models / IPC framing
+│   ├── FanControl.Service/   # Library: sampling loop, hardware sources, communication, config, logging, tray
+│   ├── FanControl.Host/      # Background daemon (C#, resident, tray + named-pipe server)
+│   └── FanControl.UI.Cpp/    # UI (C++20, Direct2D custom drawing, Windows 11 Settings style)
+├── installer/                # Inno Setup script and one-shot packaging script
 ├── tests/FanControl.Tests
-└── docs/                 # Architecture & protocol docs
+└── docs/                     # Architecture, device protocol and IPC protocol docs
 ```
 
 Sampling chain: `temperature source (independent CPU/GPU) → curve lookup by mode → PWM smoothing → send over BLE/COM → OLED display`.
+
+Ownership: temperatures/RPM/PWM/connection state and config writes live only in the daemon; the UI only owns the current page, scroll position and an in-progress curve edit. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
 ## Environment
 
 ### Host app
 
 - Windows 10/11 x64;
-- .NET 8 SDK (8.0.423+) — only needed to compile the source;
-- Visual Studio 2026 (.NET desktop workload) — only needed to build the main app;
+- .NET 8 SDK (8.0.423+) — to build the daemon and libraries;
+- MSVC (Visual Studio 2026 Build Tools or IDE) + Windows SDK 10, C++20 — to build the UI;
 - Inno Setup 6 (to build installers).
 
 ## Build
 
-Prerequisites: .NET 8 SDK (8.0.423+), Visual Studio 2026 (.NET desktop workload).
+Prerequisites: .NET 8 SDK (8.0.423+) for the daemon, MSVC + Windows SDK 10 for the UI.
 
 ```powershell
-# Libraries & tests
-dotnet build FanControl.Shared
-dotnet build FanControl.Service
-dotnet test tests/FanControl.Tests
+# Daemon, libraries & tests
+dotnet build src\FanControl.Host\FanControl.Host.csproj -c Debug
+dotnet test tests\FanControl.Tests
 
-# Main app (WPF, x64)
-msbuild FanControl.UI\FanControl.UI.csproj /restore /p:Configuration=Debug /p:Platform=x64
-
-# Publish a framework-dependent build (small, needs .NET 8 Desktop Runtime)
-dotnet publish FanControl.UI\FanControl.UI.csproj -c Release -r win-x64 --no-self-contained -o ..\artifacts\publish\framework
-
-# Publish a self-contained build (no .NET install needed)
-dotnet publish FanControl.UI\FanControl.UI.csproj -c Release -r win-x64 --self-contained true -o ..\artifacts\publish\selfcontained
+# UI (C++): build.bat calls vcvars64 and then cl
+cd src\FanControl.UI.Cpp
+build.bat
+# or with CMake (bundled with Visual Studio)
+cmake -B build -S . && cmake --build build --config Release
 ```
+
+### One-shot packaging (two flavors)
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File installer\_build-release.ps1
+```
+
+The script builds the C++ UI, publishes the daemon in both flavors, copies `FanControl.UI.exe` into the publish folder, zips it and calls Inno Setup. Artifacts land **outside** the repo in `..\..\artifacts\`.
+
+| Form | Self-contained (no .NET needed) | Needs .NET 8 |
+| --- | --- | --- |
+| Portable zip | `..\..\artifacts\release\FanControl-1.4.0-selfcontained-win-x64.zip` (~34 MB) | `..\..\artifacts\release\FanControl-1.4.0-framework-win-x64.zip` (~2.5 MB) |
+| Installer | `..\..\artifacts\installer\FanControl-Setup-Full-1.4.0.exe` (~27 MB) | `..\..\artifacts\installer\FanControl-Setup-Slim-1.4.0.exe` (~4 MB) |
+
+> `_build-release.ps1` must stay saved as **UTF-8 with BOM**: PowerShell 5.1 parses BOM-less files as GBK and mangles the Chinese literals.
 
 ## Run
 
-Run `FanControl.exe` from the publish output (or use the installer / portable zip from a release):
+Run `FanControl.UI.exe` from the publish output (or use the installer / portable zip from a release). If the daemon is not running, the UI elevates and starts `FanControl.Host.exe`; you can also run the daemon alone and stay in the tray:
 
-- Main window: dashboard (live temperatures/trend), settings, curve editor;
-- Tray: open UI / auto-start / exit; closing the main window minimizes to tray while monitoring continues;
-- Manual launch requests administrator rights (hardware sensors); auto-start runs silently with highest privileges via Task Scheduler.
-
-> The Service is a plain library running with user-level privileges — no extra service install needed.
+- UI: dashboard (live temperatures/trend), settings, curve editor, about;
+- Tray (owned by the daemon): open UI / reconnect / auto-start / exit; closing the UI keeps fan control running;
+- The daemon needs administrator rights (hardware sensors); auto-start runs silently with highest privileges via Task Scheduler;
+- Both exes must sit in the same folder (the UI looks for the daemon next to itself and vice versa).
 
 ## Temperature sources
 

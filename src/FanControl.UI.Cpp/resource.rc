@@ -1,0 +1,3 @@
+// 应用图标资源（安装包与窗口/任务栏图标共用）
+#define IDI_ICON1 101
+IDI_ICON1 ICON "app.ico"

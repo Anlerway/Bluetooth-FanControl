@@ -17,12 +17,32 @@
 - 帧格式：一行 ASCII，`PWM:<0-100>\r\n`，示例 `PWM:45.0`；
 - 其余指令与 BLE 相同。
 
-## 进程间契约（保留，尚未接线）
+## 进程间（FanControl.UI.exe ↔ FanControl.Host.exe）
 
-`FanControl.Shared/Contracts/` 下的 `IpcMessage` / `IpcResponse` / `IpcCommandType` / `PipeFraming` 定义了 UI ↔ 后台进程的线路格式：
+- 传输：命名管道 `\\.\pipe\FanControl.Host.v1`，单实例、双向字节流。
+- 分帧：4 字节小端长度 + UTF-8 JSON（> 1 MB 视为错误），与 `FanControl.Shared/Contracts/PipeFraming.cs` 一致。
+- 后台连上即推一帧 `state`，此后每 400 ms 一帧；配置改动额外广播 `config`。
+- 界面侧必须以 `FILE_FLAG_OVERLAPPED` 打开句柄并给读写设超时：后台先写首帧，同步写会把界面线程堵在管道缓冲上。
 
-- 分帧：4 字节小端长度前缀 + UTF-8 JSON 载荷；
-- 请求信封 `IpcMessage { Command, RequestId, PayloadJson }`，响应信封 `IpcResponse { RequestId, Success, Error, PayloadJson }`；
-- JSON 统一走 `FanControl.Shared.Contracts.JsonDefaults.Options`（camelCase、忽略 null）。
+命令（界面 → 后台）：
 
-目前没有管道服务端/客户端，这批契约留作将来进程分离时复用，已有序列化测试覆盖。
+| cmd | 载荷 | 说明 |
+| --- | --- | --- |
+| `hello` | — | 握手，回 `{"event":"hello","protocol":1,"version":"1.4.0"}` |
+| `getState` | — | 立即补一帧 `state` |
+| `set` | `key`、`value` | 改单个配置项；成功回 `{"event":"ok","cmd":"set"}`，失败回 `{"event":"error","message":…}` |
+| `setCurve` / `setRpmCurve` | `points: [[温度, PWM], …]` | 至少 2 点，后台按 x 排序并 clamp 到 0–100 |
+| `reconnect` | — | 强制重建 BLE / COM 连接 |
+| `showWindow` | — | 唤出 / 激活界面窗口 |
+
+事件（后台 → 界面）：`hello` / `state` / `config` / `ok` / `error`。
+
+`state` 字段：`cpu`、`gpu`、`rpm`、`pwm`、`rawPwm`、`mode`、`connectionState`、`connected`、`communicationType`、`deviceName`、`lastError`、`timestamp`（epoch ms）。
+
+`config` 字段（camelCase）：`temperatureSource`、`gpuTemperatureSource`、`gpuSelection`、`fanSpeedSource`、`fanControlMode`、`communicationType`、`comPort`、`comBaudRate`、`bleDeviceMac`、`bleDeviceName`、`pollIntervalMilliseconds`、`blePollIntervalSeconds`、`bleReconnectIntervalSeconds`、`autoReconnectBle`、`pwmSmoothingWindowSeconds`、`notifyOnBleDisconnect`、`notifyOnTemperatureError`、`language`、`temperatureUnit`、`theme`、`manualPwmPercent`、`smoothingEnabled`、`curve`、`rpmCurve`。
+
+`set` 的取值范围：`pollIntervalMilliseconds` 100–5000、`blePollIntervalSeconds` 1–30、`bleReconnectIntervalSeconds` 1–60、`pwmSmoothingWindowSeconds` 0–30、`manualPwmPercent` 0–100；枚举 key 的合法值见 `src/FanControl.Host/Ipc/ConfigPatch.cs`。
+
+安全：仅本地命名管道，ACL 为默认（同机同用户可连），后台不监听任何网络端口。
+
+> `FanControl.Shared/Contracts` 里的 `IpcMessage` / `IpcResponse` 是早期信封设计，分帧规则与本协议一致，但当前实车报文以上表为准（`cmd` / `event` 扁平结构）。

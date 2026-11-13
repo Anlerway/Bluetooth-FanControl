@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <!-- 常驻守护进程：无界面、开机自启、需要管理员权限（EC / ACPI / BLE 访问）。
+         界面进程 FanControl.UI.exe（C++）按需拉起，两者只通过命名管道通信。 -->
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <AssemblyName>FanControl.Host</AssemblyName>
+    <RootNamespace>FanControl.Host</RootNamespace>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <Version>1.4.0</Version>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\FanControl.Service\FanControl.Service.csproj" />
+    <ProjectReference Include="..\FanControl.Shared\FanControl.Shared.csproj" />
+  </ItemGroup>
+
+</Project>

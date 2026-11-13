@@ -6,6 +6,11 @@
 *.sln.docstates
 [Bb]in/
 [Oo]bj/
+# MSVC 中间产物（界面工程直接调 cl）
+src/FanControl.UI.Cpp/build/
+*.obj
+*.res
+build.log
 [Dd]ebug/
 [Rr]elease/
 x64/

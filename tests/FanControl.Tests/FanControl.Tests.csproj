@@ -17,9 +17,8 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\FanControl.Shared\FanControl.Shared.csproj" />
-    <ProjectReference Include="..\..\FanControl.Service\FanControl.Service.csproj" />
-    <ProjectReference Include="..\..\FanControl.UI\FanControl.UI.csproj" />
+    <ProjectReference Include="..\..\src\FanControl.Shared\FanControl.Shared.csproj" />
+    <ProjectReference Include="..\..\src\FanControl.Service\FanControl.Service.csproj" />
   </ItemGroup>
 
   <ItemGroup>
