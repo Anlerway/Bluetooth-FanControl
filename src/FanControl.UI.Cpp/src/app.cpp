@@ -134,6 +134,10 @@ bool App::CreateTarget() {
     D2D1_SIZE_U size = D2D1::SizeU(std::max<LONG>(1, rc.right - rc.left), std::max<LONG>(1, rc.bottom - rc.top));
     if (!rt_) {
         auto props = D2D1::RenderTargetProperties();
+        // 软件光栅：硬件 HwndRenderTarget 在这类小工具上要多背 ~45 MB 私有内存和
+        // 20 多个驱动线程（实测 65 MB / 45 线程 vs 27 MB / 27 线程），而界面只在
+        // 收到状态帧和鼠标交互时重绘，软件光栅的 CPU 代价（约 4% 单核）更划算。
+        props.type = D2D1_RENDER_TARGET_TYPE_SOFTWARE;
         props.dpiX = 96.0f * scale_;
         props.dpiY = 96.0f * scale_;
         auto hwndProps = D2D1::HwndRenderTargetProperties(hwnd_, size);

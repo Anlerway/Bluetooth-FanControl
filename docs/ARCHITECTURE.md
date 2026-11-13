@@ -47,6 +47,19 @@ FanControl.Host.exe (管理员, 常驻)          FanControl.UI.exe (普通权限
 - 界面：主线程（消息循环 + D2D 绘制）+ IPC 读线程（只 `PostMessage`，不碰 UI 对象）。
 - LibreHardwareMonitor 的 `Computer.Update()` 由 `LhmComputerHost.EnsureFresh()` 统一节流（800 ms），温度与转速共享同一份快照，避免一个采样周期打两遍 EC/SMBus。
 
+## 资源占用（本机实测）
+
+测试机：Windows 11 / 2560×1600 @150% / 后台以 `dotnet FanControl.Host.dll` 运行（非管理员，CPU 温度读不到，其余传感器正常）。
+
+| 进程 | 私有内存 | 工作集 | 线程 |
+| --- | --- | --- | --- |
+| `FanControl.Host.exe`（后台常驻） | 42 MB | 85 MB | 26–33 |
+| `FanControl.UI.exe`（界面，实时收数据） | 26 MB | 43 MB | 24 |
+| `FanControl.UI.exe`（界面，空闲） | 17 MB | 31 MB | 24 |
+| 旧单进程 WPF 版（对照） | 82 MB | — | 24 |
+
+界面渲染目标固定用 `D2D1_RENDER_TARGET_TYPE_SOFTWARE`：同一台机器上硬件 `HwndRenderTarget` 会把私有内存推到 65 MB、线程涨到 45 个（多出来的是显卡驱动线程），而界面只在收到状态帧或鼠标交互时重绘（约 2.5 次/秒），软件光栅的 CPU 代价约 4% 单核，更划算。
+
 ## 进程间协议
 
 管道名 `FanControl.Host.v1`，协议版本 1，帧格式与字段见 [PROTOCOL.md](PROTOCOL.md)。
