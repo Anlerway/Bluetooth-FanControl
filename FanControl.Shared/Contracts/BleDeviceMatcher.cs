@@ -1,3 +1,5 @@
+using System.Text;
+
 namespace FanControl.Shared.Contracts;
 
 /// <summary>
@@ -100,5 +102,54 @@ public static class BleDeviceMatcher
         }
 
         return mac;
+    }
+
+    /// <summary>
+    /// 从 PnP 实例路径/设备接口路径解析 MAC：BLE 设备实例形如
+    /// "BTHLE\DEV_AABBCCDDEEFF\8&1a2b3c4d&0&0000"，接口路径形如
+    /// "\\?\BTHLEDevice#{781aee18-...}#{...}_Dev_AABBCCDDEEFF"。先剔除 {GUID} 段，
+    /// 避免把 GUID 末段（同样是 12 位十六进制）误判成 MAC。
+    /// </summary>
+    public static string ParseMacFromDevicePath(string? devicePath)
+    {
+        if (string.IsNullOrWhiteSpace(devicePath))
+        {
+            return string.Empty;
+        }
+
+        var builder = new StringBuilder(devicePath.Length);
+        var insideGuid = false;
+        foreach (var ch in devicePath)
+        {
+            switch (ch)
+            {
+                case '{':
+                    insideGuid = true;
+                    continue;
+                case '}':
+                    insideGuid = false;
+                    builder.Append(' ');
+                    continue;
+                default:
+                    if (!insideGuid)
+                    {
+                        builder.Append(ch);
+                    }
+
+                    break;
+            }
+        }
+
+        var separators = new[] { '\\', '#', '-', '_', '&', ' ' };
+        foreach (var token in builder.ToString().Split(separators, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var mac = NormalizeMac(token);
+            if (mac.Length == 12 && mac != "000000000000")
+            {
+                return mac;
+            }
+        }
+
+        return string.Empty;
     }
 }

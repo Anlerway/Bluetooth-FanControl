@@ -1,11 +1,8 @@
+using System.Text;
 using FanControl.Service.Config;
 using FanControl.Shared.Contracts;
 using FanControl.Shared.Enums;
 using Microsoft.Extensions.Logging;
-using Windows.Devices.Bluetooth;
-using Windows.Devices.Bluetooth.GenericAttributeProfile;
-using Windows.Devices.Enumeration;
-using Windows.Storage.Streams;
 
 namespace FanControl.Service.Communication;
 
@@ -13,6 +10,7 @@ namespace FanControl.Service.Communication;
 /// BLE 通信通道（Nordic UART Service，与固件约定）：
 /// - RX 特征（6e400002）写入文本行：PWM:x / TIME:... / STATUS? / CPUx / GPUx
 /// - TX 特征（6e400003）订阅通知，接收设备状态
+/// 实现改为 Win32 bluetoothleapis（见 <see cref="BluetoothLeInterop"/>），不再依赖 WinRT 投影。
 /// </summary>
 public sealed class BleChannel : ICommunicationChannel
 {
@@ -20,12 +18,19 @@ public sealed class BleChannel : ICommunicationChannel
     private const string NusRxUuid = "6e400002-b5a3-f393-e0a9-e50e24dcca9e";
     private const string NusTxUuid = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
 
+    private static readonly TimeSpan ConnectTimeout = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan WriteTimeout = TimeSpan.FromSeconds(5);
+
+    private static readonly Guid NusService = new(NusServiceUuid);
+    private static readonly Guid NusRx = new(NusRxUuid);
+    private static readonly Guid NusTx = new(NusTxUuid);
+
     private readonly IConfigManager _configManager;
     private readonly ILogger<BleChannel> _logger;
     private readonly object _sync = new();
-    private BluetoothLEDevice? _device;
-    private GattCharacteristic? _rxCharacteristic;
-    private GattCharacteristic? _txCharacteristic;
+    private readonly SemaphoreSlim _writeLock = new(1, 1);
+    private BleGattSession? _session;
+    private byte[]? _rxCharacteristic;
 
     public BleChannel(IConfigManager configManager, ILogger<BleChannel> logger)
     {
@@ -47,96 +52,27 @@ public sealed class BleChannel : ICommunicationChannel
             throw new InvalidOperationException("未配置 BLE 设备，请在设置中选择设备。");
         }
 
-        var devices = await WithTimeoutAsync(
-            DeviceInformation.FindAllAsync(BluetoothLEDevice.GetDeviceSelector()).AsTask(cancellationToken),
-            TimeSpan.FromSeconds(10),
-            "设备枚举");
+        var result = await WithTimeoutAsync(
+            () => ConnectCore(targetMac, deviceName, cancellationToken),
+            ConnectTimeout,
+            "连接",
+            cancellationToken);
 
-        var deviceInfo = ResolveDevice(devices, targetMac, deviceName);
-
-        if (deviceInfo is null)
-        {
-            throw new InvalidOperationException(string.IsNullOrWhiteSpace(targetMac)
-                ? $"未找到已配对的蓝牙设备：{deviceName}"
-                : $"未找到已配对的蓝牙设备（MAC {targetMac}），请在设置中刷新后重新选择。");
-        }
-
-        // 显示名优先用配置里的名称，其次用系统枚举到的名称
-        var displayName = !string.IsNullOrWhiteSpace(deviceName) ? deviceName : deviceInfo.Name;
-        var device = await WithTimeoutAsync(
-            BluetoothLEDevice.FromIdAsync(deviceInfo.Id).AsTask(cancellationToken),
-            TimeSpan.FromSeconds(10),
-            "打开设备")
-            ?? throw new InvalidOperationException($"无法打开蓝牙设备：{displayName}");
-
-        GattDeviceServicesResult serviceResult;
-        GattCharacteristicsResult rxResult;
-        GattCharacteristicsResult txResult;
-
-        try
-        {
-            serviceResult = await WithTimeoutAsync(
-                device.GetGattServicesForUuidAsync(new Guid(NusServiceUuid)).AsTask(cancellationToken),
-                TimeSpan.FromSeconds(10),
-                "服务发现");
-
-            if (serviceResult.Status != GattCommunicationStatus.Success
-                || serviceResult.Services.Count == 0)
-            {
-                throw new InvalidOperationException($"{displayName} 未提供 NUS 服务，请确认固件已启用 BLE 模式。");
-            }
-
-            var service = serviceResult.Services[0];
-            rxResult = await WithTimeoutAsync(
-                service.GetCharacteristicsForUuidAsync(new Guid(NusRxUuid)).AsTask(cancellationToken),
-                TimeSpan.FromSeconds(10),
-                "RX 特征");
-            txResult = await WithTimeoutAsync(
-                service.GetCharacteristicsForUuidAsync(new Guid(NusTxUuid)).AsTask(cancellationToken),
-                TimeSpan.FromSeconds(10),
-                "TX 特征");
-
-            if (rxResult.Status != GattCommunicationStatus.Success || rxResult.Characteristics.Count == 0
-                || txResult.Status != GattCommunicationStatus.Success || txResult.Characteristics.Count == 0)
-            {
-                throw new InvalidOperationException("设备 NUS 特征不完整，请确认固件版本。");
-            }
-
-            var tx = txResult.Characteristics[0];
-            var status = await WithTimeoutAsync(
-                tx.WriteClientCharacteristicConfigurationDescriptorAsync(
-                    GattClientCharacteristicConfigurationDescriptorValue.Notify).AsTask(cancellationToken),
-                TimeSpan.FromSeconds(10),
-                "订阅通知");
-
-            if (status != GattCommunicationStatus.Success)
-            {
-                throw new InvalidOperationException("订阅设备通知失败。");
-            }
-        }
-        catch
-        {
-            try
-            {
-                device.Dispose();
-            }
-            catch
-            {
-                // 释放失败不影响抛出原因
-            }
-
-            throw;
-        }
-
+        BleGattSession? previous;
         lock (_sync)
         {
-            _device?.Dispose();
-            _device = device;
-            _rxCharacteristic = rxResult.Characteristics[0];
-            _txCharacteristic = txResult.Characteristics[0];
+            previous = _session;
+            _session = result.Session;
+            _rxCharacteristic = result.RxCharacteristic;
             IsConnected = true;
         }
 
+        previous?.Dispose();
+        _logger.LogInformation(
+            "BLE 已连接：{Name}（{Mac}），GATT 模块 {Module}",
+            result.DisplayName,
+            string.IsNullOrWhiteSpace(targetMac) ? "未配置" : targetMac,
+            BluetoothLeInterop.GattModuleName ?? "未知");
     }
 
     public async Task SendAsync(PwmCommand command, CancellationToken cancellationToken = default)
@@ -159,73 +95,120 @@ public sealed class BleChannel : ICommunicationChannel
         }
     }
 
-    public async Task DisconnectAsync(CancellationToken cancellationToken = default)
+    public Task DisconnectAsync(CancellationToken cancellationToken = default)
     {
-        BluetoothLEDevice? device;
+        BleGattSession? session;
         lock (_sync)
         {
-            device = _device;
-            _device = null;
+            session = _session;
+            _session = null;
             _rxCharacteristic = null;
-            _txCharacteristic = null;
             IsConnected = false;
         }
 
-        if (device is not null)
+        try
         {
-            try
-            {
-                device.Dispose();
-            }
-            catch
-            {
-                // 释放失败不影响退出
-            }
+            session?.Dispose();
+        }
+        catch (Exception)
+        {
+            // 释放失败不影响退出
         }
 
-        await Task.CompletedTask;
+        return Task.CompletedTask;
+    }
+
+    private (BleGattSession Session, byte[] RxCharacteristic, string DisplayName) ConnectCore(
+        string targetMac,
+        string deviceName,
+        CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var devices = BluetoothLeInterop.EnumerateDevices();
+        var target = ResolveDevice(devices, targetMac, deviceName);
+
+        if (target is null)
+        {
+            throw new InvalidOperationException(string.IsNullOrWhiteSpace(targetMac)
+                ? $"未找到已配对的蓝牙设备：{deviceName}"
+                : $"未找到已配对的蓝牙设备（MAC {targetMac}），请在设置中刷新后重新选择。");
+        }
+
+        var displayName = !string.IsNullOrWhiteSpace(deviceName)
+            ? deviceName
+            : (string.IsNullOrWhiteSpace(target.Name) ? target.MacAddress : target.Name);
+
+        var session = BluetoothLeInterop.Open(target.Path);
+        try
+        {
+            if (session.FindService(NusService) is null)
+            {
+                throw new InvalidOperationException($"{displayName} 未提供 NUS 服务，请确认固件已启用 BLE 模式。");
+            }
+
+            var rx = session.FindCharacteristic(NusRx)
+                ?? throw new InvalidOperationException("设备 NUS 特征不完整，请确认固件版本。");
+            var tx = session.FindCharacteristic(NusTx)
+                ?? throw new InvalidOperationException("设备 NUS 特征不完整，请确认固件版本。");
+
+            // 通知内容本实现不使用；订阅失败只记警告，不因此断开（写入通道仍可用）
+            if (!session.Subscribe(tx))
+            {
+                _logger.LogWarning("{Name} 订阅 TX 通知失败，继续使用写入通道。", displayName);
+            }
+
+            return (session, rx, displayName);
+        }
+        catch
+        {
+            session.Dispose();
+            throw;
+        }
     }
 
     private async Task SendLineAsync(string line, CancellationToken cancellationToken)
     {
-        GattCharacteristic? rx;
+        byte[]? rx;
+        BleGattSession? session;
         lock (_sync)
         {
             rx = _rxCharacteristic;
-            if (!IsConnected || rx is null)
+            session = _session;
+            if (!IsConnected || rx is null || session is null)
             {
                 throw new InvalidOperationException("BLE 未连接。");
             }
         }
 
-        using var writer = new DataWriter();
-        writer.WriteString(line);
+        var payload = Encoding.UTF8.GetBytes(line);
 
-        var writeTask = rx
-            .WriteValueAsync(writer.DetachBuffer(), GattWriteOption.WriteWithResponse)
-            .AsTask(cancellationToken);
-
-        var completed = await Task.WhenAny(
-            writeTask,
-            Task.Delay(TimeSpan.FromSeconds(5), cancellationToken));
-        if (completed != writeTask)
+        await _writeLock.WaitAsync(cancellationToken);
+        try
         {
-            throw new InvalidOperationException("BLE 写入超时。");
+            var target = session;
+            var characteristic = rx;
+            await WithTimeoutAsync(
+                () =>
+                {
+                    target.Write(characteristic, payload);
+                    return true;
+                },
+                WriteTimeout,
+                "写入",
+                cancellationToken);
         }
-
-        var writeStatus = await writeTask;
-
-        if (writeStatus != GattCommunicationStatus.Success)
+        finally
         {
-            throw new InvalidOperationException($"BLE 写入失败：{writeStatus}");
+            _writeLock.Release();
         }
     }
 
     /// <summary>
     /// 设备定位：优先按 MAC 地址匹配（唯一）；未配置 MAC 时回退按名称匹配（兼容旧配置）。
     /// </summary>
-    private static DeviceInformation? ResolveDevice(
-        DeviceInformationCollection devices,
+    private static BleDeviceInterface? ResolveDevice(
+        IReadOnlyList<BleDeviceInterface> devices,
         string targetMac,
         string deviceName)
     {
@@ -233,7 +216,7 @@ public sealed class BleChannel : ICommunicationChannel
         {
             foreach (var device in devices)
             {
-                if (BleDeviceMatcher.MacEquals(BleDeviceMatcher.ParseMacFromId(device.Id), targetMac))
+                if (BleDeviceMatcher.MacEquals(device.MacAddress, targetMac))
                 {
                     return device;
                 }
@@ -244,7 +227,8 @@ public sealed class BleChannel : ICommunicationChannel
 
         foreach (var device in devices)
         {
-            if (string.Equals(device.Name, deviceName, StringComparison.OrdinalIgnoreCase))
+            if (!string.IsNullOrEmpty(device.Name)
+                && string.Equals(device.Name, deviceName, StringComparison.OrdinalIgnoreCase))
             {
                 return device;
             }
@@ -253,9 +237,15 @@ public sealed class BleChannel : ICommunicationChannel
         return null;
     }
 
-    private static async Task<T> WithTimeoutAsync<T>(Task<T> task, TimeSpan timeout, string operation)
+    private static async Task<T> WithTimeoutAsync<T>(
+        Func<T> work,
+        TimeSpan timeout,
+        string operation,
+        CancellationToken cancellationToken)
     {
-        var completed = await Task.WhenAny(task, Task.Delay(timeout));
+        // GATT 调用是同步阻塞的（服务发现可达数十秒），放到线程池并加超时，避免拖住采样循环
+        var task = Task.Run(work, cancellationToken);
+        var completed = await Task.WhenAny(task, Task.Delay(timeout, cancellationToken));
         if (completed != task)
         {
             throw new InvalidOperationException($"BLE {operation}超时（{(int)timeout.TotalSeconds}s）。");

@@ -8,8 +8,11 @@ namespace FanControl.Service.Hardware;
 /// </summary>
 internal static class LhmComputerHost
 {
+    private const int UpdateIntervalMilliseconds = 800;
     private static readonly object Sync = new();
+    private static readonly object UpdateSync = new();
     private static Computer? _computer;
+    private static long _lastUpdateTimestamp;
 
     public static Computer Get()
     {
@@ -34,12 +37,42 @@ internal static class LhmComputerHost
         }
     }
 
+    /// <summary>
+    /// 统一刷新全部硬件（含子硬件），最小间隔 800 ms：
+    /// 温度与转速两个 Provider 在同一采样周期共享一次 Update，避免重复走 EC/SMBus
+    /// （LHM 的 Update 是最重的一次硬件 IO）。
+    /// </summary>
+    public static void EnsureFresh()
+    {
+        lock (UpdateSync)
+        {
+            var now = Environment.TickCount64;
+            if (_lastUpdateTimestamp != 0 && now - _lastUpdateTimestamp < UpdateIntervalMilliseconds)
+            {
+                return;
+            }
+
+            var computer = Get();
+            foreach (var hardware in computer.Hardware)
+            {
+                hardware.Update();
+                foreach (var subHardware in hardware.SubHardware)
+                {
+                    subHardware.Update();
+                }
+            }
+
+            _lastUpdateTimestamp = now;
+        }
+    }
+
     public static void Close()
     {
         lock (Sync)
         {
             _computer?.Close();
             _computer = null;
+            _lastUpdateTimestamp = 0;
         }
     }
 }

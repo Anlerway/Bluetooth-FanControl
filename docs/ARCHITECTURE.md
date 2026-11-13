@@ -1,12 +1,21 @@
 # FanControl 架构
 
-（骨架阶段占位，随实现逐步完善。）
+## 进程与工程
 
-- 前台：`FanControl.UI`（WinUI 3，MVVM，仅负责展示与交互，不执行硬件/通信逻辑）
-- 后台：`FanControl.Service`（.NET 8，硬件监控与风扇控制核心，可作 Windows 服务或用户级任务）
-- 托盘：`FanControl.Tray`（用户级独立进程，提供打开 UI / 启停服务 / 退出入口）
-- 通信：NamedPipe（UI ↔ Service）、COM/BLE（Service ↔ ESP32）
-- 配置：JSON（安装目录 / 用户数据两种模式）
+| 工程 | 作用 |
+| --- | --- |
+| `FanControl.Shared` | 共享契约：枚举、模型、IPC 信封与分帧、MAC 匹配工具 |
+| `FanControl.Service` | 类库：采样循环、硬件数据源（LibreHardwareMonitor / ATK ACPI）、通信（BLE / COM）、配置、日志、托盘 |
+| `FanControl.UI` | WPF 主程序（MVVM，CommunityToolkit.Mvvm） |
+| `tests/FanControl.Tests` | xUnit 单元测试 |
+
+当前形态是**单进程**：`FanControl.UI/App.xaml.cs` 通过 `FanControlServices.BuildFanControlProvider` 装配运行时并在 UI 进程内 `StartAsync`，托盘是与主窗口同进程的 STA 线程。
+
+## 通信
+
+- 设备侧（ESP32）：BLE（Nordic UART Service）或串口，载荷都是一行 ASCII 文本，详见 [PROTOCOL.md](PROTOCOL.md)。
+- BLE 走 Win32 `bluetoothleapis`（`BluetoothGATT*`）+ SetupAPI 枚举设备接口，**不依赖 WinRT 投影**；因此工程的 TFM 是 `net8.0-windows` 而不是 `net8.0-windows10.0.19041.0`。
+- 托盘用 `Shell_NotifyIcon` + `TrackPopupMenuEx`（P/Invoke），**不依赖 WinForms**。
 
 ## PWM 平滑
 
@@ -24,4 +33,9 @@
 - 切换控制模式 / 温度源：清空窗口，避免旧通道的值把切换瞬间拖成缓慢爬行；
 - 温度源无数据（null/NaN）：保持上次输出，不写入样本。
 
-详细计划见 [PLAN.md](../PLAN.md)。
+## 仓库边界
+
+仓库只放源码、构建脚本、必要工程文档和测试：
+
+- 进仓库：`*.cs` / `*.xaml` / `*.csproj` / `*.slnx` / `Directory.Build.props` / `.github/workflows` / `docs/` / `screenshots/` / `tests/`；
+- 不进仓库：`bin/`、`obj/`、`.vs/`、发布目录、zip 与安装包等中间产物。打包脚本默认输出到仓库外的 `..\artifacts\`。

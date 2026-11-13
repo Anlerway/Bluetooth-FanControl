@@ -19,8 +19,9 @@ param(
     [string]$Configuration = 'Release',
     [string]$RuntimeIdentifier = 'win-x64',
     [string]$Project = "$PSScriptRoot\..\FanControl.UI\FanControl.UI.csproj",
-    [string]$ReleaseRoot = "$PSScriptRoot\..\artifacts\release",
-    [string]$InstallerRoot = "$PSScriptRoot\..\artifacts\installer",
+    # Outputs stay OUTSIDE the repository: the repo only holds source, build, docs and tests.
+    [string]$ReleaseRoot = "$PSScriptRoot\..\..\artifacts\release",
+    [string]$InstallerRoot = "$PSScriptRoot\..\..\artifacts\installer",
     [string]$NamesFile = "$PSScriptRoot\package-names.txt",
     [string]$Iscc = 'D:\APP\Inno Setup 6\ISCC.exe'
 )

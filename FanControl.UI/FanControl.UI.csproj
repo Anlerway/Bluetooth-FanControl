@@ -3,8 +3,8 @@
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
     <AssemblyName>FanControl</AssemblyName>
-    <!-- windows10.0.x 目标框架提供 Windows.Devices 投影，用于枚举蓝牙设备 -->
-    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
+    <!-- BLE 走 Win32 P/Invoke，无需 windows10.0.x 投影 -->
+    <TargetFramework>net8.0-windows</TargetFramework>
     <RootNamespace>FanControl.UI</RootNamespace>
     <UseWPF>true</UseWPF>
     <Nullable>enable</Nullable>

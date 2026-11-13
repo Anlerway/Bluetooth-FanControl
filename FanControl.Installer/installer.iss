@@ -12,13 +12,13 @@
 #define MyAppExeName "FanControl.exe"
 
 #ifndef AppSource
-  #define AppSource "..\artifacts\release\selfcontained"
+  #define AppSource "..\..\artifacts\release\selfcontained"
 #endif
 #ifndef OutputName
   #define OutputName "FanControl-Setup-Full"
 #endif
 #ifndef OutputDir
-  #define OutputDir "..\artifacts\installer"
+  #define OutputDir "..\..\artifacts\installer"
 #endif
 
 [Setup]

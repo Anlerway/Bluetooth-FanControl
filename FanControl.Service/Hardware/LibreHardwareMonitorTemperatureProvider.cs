@@ -17,21 +17,19 @@ public sealed class LibreHardwareMonitorTemperatureProvider : ITemperatureProvid
         return Task.Run(
             () =>
             {
+                // 硬件刷新由 LhmComputerHost 统一节流，与转速 Provider 共享同一次 Update
+                LhmComputerHost.EnsureFresh();
                 var computer = LhmComputerHost.Get();
                 double? cpu = null;
                 double? gpu = null;
                 double? rpm = null;
-                var hardwareCount = 0;
 
                 foreach (var hardware in computer.Hardware)
                 {
-                    hardwareCount++;
-                    hardware.Update();
                     Collect(hardware, ref cpu, ref gpu, ref rpm, gpuSelection);
 
                     foreach (var subHardware in hardware.SubHardware)
                     {
-                        subHardware.Update();
                         Collect(subHardware, ref cpu, ref gpu, ref rpm, gpuSelection);
                     }
                 }

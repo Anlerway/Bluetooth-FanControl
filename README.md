@@ -30,7 +30,7 @@
 
 在垃圾研究社开源硬件的基础上，针对实际体验做了完整重制：
 
-- **上位机**：WinUI 3 桌面程序，新增自动重连、开机自启、控制面板、更多更自由的温度源获取、可调节的温度-风扇曲线；
+- **上位机**：WPF 桌面程序，新增自动重连、开机自启、控制面板、更多更自由的温度源获取、可调节的温度-风扇曲线；
 
 ## 功能特性
 
@@ -77,13 +77,13 @@
 
 ## 架构
 
-单进程设计：UI（WinUI 3）与后台监控循环同进程运行，托盘为独立 STA 线程，退出时统一释放资源。
+单进程设计：UI（WPF）与后台监控循环同进程运行，托盘为独立 STA 线程（`Shell_NotifyIcon`），退出时统一释放资源。
 
 ```text
 FanControl.slnx
 ├── FanControl.Shared/    # 共享契约：Enums / Models（配置、数据包）
 ├── FanControl.Service/   # 类库：采样循环、硬件数据源、通信、配置、托盘
-├── FanControl.UI/        # WinUI 3 主程序
+├── FanControl.UI/        # WPF 主程序
 ├── FanControl.Installer/ # Inno Setup 安装脚本
 ├── tests/FanControl.Tests
 └── docs/                 # 架构与通信协议文档
@@ -120,12 +120,12 @@ dotnet build FanControl.UI\FanControl.UI.csproj -c Debug -r win-x64
 powershell -NoProfile -ExecutionPolicy Bypass -File FanControl.Installer\_build-release.ps1
 ```
 
-产物（`PublishSingleFile` 关闭，主程序以普通目录形式发布，不做单文件打包）：
+产物输出到**仓库外**的 `..\artifacts\`（可用 `-ReleaseRoot` / `-InstallerRoot` 改），`PublishSingleFile` 关闭，主程序以普通目录形式发布：
 
 | 形态 | 自带运行库（免装 .NET） | 需 .NET 8 |
 | --- | --- | --- |
-| 免安装压缩包 | `artifacts\release\FanControl-1.3.0-selfcontained-win-x64.zip` | `artifacts\release\FanControl-1.3.0-framework-win-x64.zip` |
-| 安装包 | `artifacts\installer\FanControl-Setup-Full-1.3.0.exe` | `artifacts\installer\FanControl-Setup-Slim-1.3.0.exe` |
+| 免安装压缩包 | `..\artifacts\release\FanControl-1.3.0-selfcontained-win-x64.zip` | `..\artifacts\release\FanControl-1.3.0-framework-win-x64.zip` |
+| 安装包 | `..\artifacts\installer\FanControl-Setup-Full-1.3.0.exe` | `..\artifacts\installer\FanControl-Setup-Slim-1.3.0.exe` |
 
 > 安装包阶段**不检测** .NET 运行环境，避免未装 .NET 的机器直接安装失败；需环境版装好后由程序自身提示。
 
@@ -153,7 +153,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File FanControl.Installer\_build-
 
 一行 ASCII 文本帧，`\r\n` 结尾：
 
-- 上位机 → 固件：`PWM:<0-100>`、`TIME:yyyy/MM/dd HH:mm:ss`、`TEMP:<cpu>[,<gpu>]`；
+- 上位机 → 固件：`PWM:<0-100>`、`TIME:yyyy/MM/dd HH:mm:ss`、`CPU<温度>`、`GPU<温度>`；
 - 固件 → 上位机：`READY`（连接握手）、`STATUS:...`（查询应答）。
 
 ## 参考与开源硬件

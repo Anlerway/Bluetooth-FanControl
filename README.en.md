@@ -30,7 +30,7 @@
 
 A full remake built on top of the 垃圾研究社 open-source hardware:
 
-- **Host app**: WinUI 3 desktop app, adding auto-reconnect, auto-start, a control dashboard, more flexible temperature sources, and adjustable temperature-fan curves;
+- **Host app**: WPF desktop app, adding auto-reconnect, auto-start, a control dashboard, more flexible temperature sources, and adjustable temperature-fan curves;
 
 ## Features
 
@@ -77,13 +77,13 @@ A full remake built on top of the 垃圾研究社 open-source hardware:
 
 ## Architecture
 
-Single-process design: the UI (WinUI 3) and background monitoring run in the same process; the tray runs on its own STA thread; resources are released together on exit.
+Single-process design: the UI (WPF) and background monitoring run in the same process; the tray uses `Shell_NotifyIcon` on its own STA thread; resources are released together on exit.
 
 ```text
 FanControl.slnx
 ├── FanControl.Shared/    # Shared contracts: enums / models (config, data packets)
 ├── FanControl.Service/   # Library: sampling loop, hardware sources, communication, config, tray
-├── FanControl.UI/        # WinUI 3 main app
+├── FanControl.UI/        # WPF main app
 ├── FanControl.Installer/ # Inno Setup installer script
 ├── tests/FanControl.Tests
 └── docs/                 # Architecture & protocol docs
@@ -97,12 +97,12 @@ Sampling chain: `temperature source (independent CPU/GPU) → curve lookup by mo
 
 - Windows 10/11 x64;
 - .NET 8 SDK (8.0.423+) — only needed to compile the source;
-- Visual Studio 2026 (WinUI 3 / Windows App SDK workload) — only needed to build the main app;
+- Visual Studio 2026 (.NET desktop workload) — only needed to build the main app;
 - Inno Setup 6 (to build installers).
 
 ## Build
 
-Prerequisites: .NET 8 SDK (8.0.423+), Visual Studio 2026 (WinUI 3 workload).
+Prerequisites: .NET 8 SDK (8.0.423+), Visual Studio 2026 (.NET desktop workload).
 
 ```powershell
 # Libraries & tests
@@ -110,16 +110,19 @@ dotnet build FanControl.Shared
 dotnet build FanControl.Service
 dotnet test tests/FanControl.Tests
 
-# Main app (WinUI 3, unpackaged, x64; run inside the VS2026 Developer Command Prompt)
+# Main app (WPF, x64)
 msbuild FanControl.UI\FanControl.UI.csproj /restore /p:Configuration=Debug /p:Platform=x64
 
-# Publish a self-contained single exe (no .NET install needed)
-msbuild FanControl.UI\FanControl.UI.csproj /restore /t:Publish /p:Configuration=Release /p:Platform=x64 /p:RuntimeIdentifier=win-x64 /p:WindowsAppSDKSelfContained=true /p:PublishDir=artifacts\exe\FanControl
+# Publish a framework-dependent build (small, needs .NET 8 Desktop Runtime)
+dotnet publish FanControl.UI\FanControl.UI.csproj -c Release -r win-x64 --no-self-contained -o ..\artifacts\publish\framework
+
+# Publish a self-contained build (no .NET install needed)
+dotnet publish FanControl.UI\FanControl.UI.csproj -c Release -r win-x64 --self-contained true -o ..\artifacts\publish\selfcontained
 ```
 
 ## Run
 
-Run [artifacts\exe\FanControl\FanControl.exe](artifacts/exe/FanControl/FanControl.exe), or use the installer / portable zip from a release:
+Run `FanControl.exe` from the publish output (or use the installer / portable zip from a release):
 
 - Main window: dashboard (live temperatures/trend), settings, curve editor;
 - Tray: open UI / auto-start / exit; closing the main window minimizes to tray while monitoring continues;
@@ -141,7 +144,7 @@ Run [artifacts\exe\FanControl\FanControl.exe](artifacts/exe/FanControl/FanContro
 
 One ASCII line per frame, terminated with `\r\n`:
 
-- Host → firmware: `PWM:<0-100>`, `TIME:yyyy/MM/dd HH:mm:ss`, `TEMP:<cpu>[,<gpu>]`;
+- Host → firmware: `PWM:<0-100>`, `TIME:yyyy/MM/dd HH:mm:ss`, `CPU<temp>`, `GPU<temp>`;
 - Firmware → host: `READY` (handshake), `STATUS:...` (query reply).
 
 ## References & open-source hardware

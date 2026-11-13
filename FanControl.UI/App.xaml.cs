@@ -312,31 +312,9 @@ public partial class App : Application
         bool logEnabled,
         int maxLogFiles)
     {
-        var services = new ServiceCollection();
-        var fileLogger = new FileLoggerProvider(logDirectory);
-        fileLogger.Configure(logDirectory, logEnabled, Math.Max(1, maxLogFiles));
-        services.AddSingleton(fileLogger);
-        services.AddLogging(builder => builder.AddProvider(fileLogger));
-        services.AddSingleton<IConfigManager, ConfigManager>();
-        services.AddSingleton<AppState>();
-        services.AddSingleton<FanController>();
-        services.AddSingleton<TemperatureProviderFactory>();
-        services.AddSingleton<FanSpeedProviderFactory>();
-        services.AddSingleton<AtkAcpiTemperatureProvider>();
-        services.AddSingleton<WmiTemperatureProvider>();
-        services.AddSingleton<LibreHardwareMonitorTemperatureProvider>();
-        services.AddSingleton<Aida64TemperatureProvider>();
-        services.AddSingleton<SimulatedTemperatureProvider>();
-        services.AddSingleton<AtkAcpiFanSpeedProvider>();
-        services.AddSingleton<WmiFanSpeedProvider>();
-        services.AddSingleton<LibreHardwareMonitorFanSpeedProvider>();
-        services.AddSingleton<Aida64FanSpeedProvider>();
-        services.AddSingleton<SimulatedFanSpeedProvider>();
-        services.AddSingleton<CommunicationChannelFactory>();
-        services.AddSingleton<ComChannel>();
-        services.AddSingleton<BleChannel>();
-        services.AddSingleton<FanControlRuntime>();
-        return services.BuildServiceProvider();
+        // 装配清单已下沉到 FanControl.Service（FanControlServices.AddFanControlServices），
+        // 宿主只负责 UI，不持有任何硬件/通信装配细节。
+        return FanControlServices.BuildFanControlProvider(logDirectory, logEnabled, maxLogFiles);
     }
 
     private void ShowMainWindow()

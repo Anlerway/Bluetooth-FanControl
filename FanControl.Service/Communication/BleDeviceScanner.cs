@@ -1,6 +1,4 @@
 using FanControl.Shared.Contracts;
-using Windows.Devices.Bluetooth;
-using Windows.Devices.Enumeration;
 
 namespace FanControl.Service.Communication;
 
@@ -19,79 +17,49 @@ public sealed record BleDeviceInfo(string Name, string MacAddress)
 /// <summary>
 /// BLE 设备枚举（UI 下拉列表与后台通道共用）：
 /// 以 MAC 地址作为设备定位主键，名称仅用于显示。
+/// 实现改为 SetupAPI + BTHPORT 注册表（见 <see cref="BluetoothLeInterop"/>），不再依赖 WinRT 投影。
 /// </summary>
 public static class BleDeviceScanner
 {
-    private static readonly TimeSpan EnumerationTimeout = TimeSpan.FromSeconds(5);
-    private static readonly TimeSpan AddressTimeout = TimeSpan.FromSeconds(2);
-
-    /// <summary>枚举全部 BLE 设备，解析各自的 MAC 地址（解析不到的 MAC 为空串）。</summary>
+    /// <summary>枚举全部已配对的 BLE 设备；无蓝牙适配器或权限不足时返回空列表。</summary>
     public static async Task<IReadOnlyList<BleDeviceInfo>> EnumerateAsync(
         CancellationToken cancellationToken = default)
     {
         var results = new List<BleDeviceInfo>();
 
-        DeviceInformationCollection devices;
+        IReadOnlyList<BleDeviceInterface> interfaces;
         try
         {
-            var enumeration = DeviceInformation
-                .FindAllAsync(BluetoothLEDevice.GetDeviceSelector())
-                .AsTask(cancellationToken);
-            var finished = await Task.WhenAny(enumeration, Task.Delay(EnumerationTimeout, cancellationToken));
-            if (finished != enumeration)
-            {
-                return results; // 枚举超时：返回空列表，保留调用方既有配置
-            }
-
-            devices = await enumeration;
+            interfaces = await Task.Run(BluetoothLeInterop.EnumerateDevices, cancellationToken);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
         }
         catch
         {
             return results; // 蓝牙不可用（无适配器 / 权限不足）
         }
 
-        foreach (var device in devices)
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var item in interfaces)
         {
-            var mac = BleDeviceMatcher.ParseMacFromId(device.Id);
-            if (mac.Length == 0)
+            if (string.IsNullOrWhiteSpace(item.MacAddress) && string.IsNullOrWhiteSpace(item.Name))
             {
-                mac = await TryReadMacAsync(device.Id, cancellationToken);
+                continue; // 既无 MAC 又无名称：无法在界面上定位
             }
 
-            results.Add(new BleDeviceInfo(device.Name ?? string.Empty, mac));
+            if (!string.IsNullOrWhiteSpace(item.MacAddress) && !seen.Add(item.MacAddress))
+            {
+                continue; // 同一个设备可能暴露多个接口（例如不同实例）
+            }
+
+            results.Add(new BleDeviceInfo(item.Name ?? string.Empty, item.MacAddress));
         }
 
         return results
             .OrderBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
             .ThenBy(d => d.MacAddress, StringComparer.OrdinalIgnoreCase)
             .ToList();
-    }
-
-    /// <summary>设备 ID 无法直接解析时，打开设备读取蓝牙地址作为兜底。</summary>
-    private static async Task<string> TryReadMacAsync(string deviceId, CancellationToken cancellationToken)
-    {
-        try
-        {
-            var open = BluetoothLEDevice.FromIdAsync(deviceId).AsTask(cancellationToken);
-            var finished = await Task.WhenAny(open, Task.Delay(AddressTimeout, cancellationToken));
-            if (finished != open)
-            {
-                return string.Empty;
-            }
-
-            var device = await open;
-            if (device is null)
-            {
-                return string.Empty;
-            }
-
-            var mac = BleDeviceMatcher.FormatMacAddress(device.BluetoothAddress);
-            device.Dispose();
-            return mac;
-        }
-        catch
-        {
-            return string.Empty;
-        }
     }
 }

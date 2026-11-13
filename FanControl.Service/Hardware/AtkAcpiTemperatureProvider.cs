@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using System.Runtime.InteropServices;
 using FanControl.Shared.Enums;
 
@@ -149,20 +148,8 @@ public sealed class AtkAcpiTemperatureProvider : ITemperatureProvider, IDisposab
 
     private static double? ReadCpuFromPerformanceCounter()
     {
-        try
-        {
-            using var counter = new PerformanceCounter(
-                "Thermal Zone Information",
-                "Temperature",
-                @"\_TZ.THRM",
-                true);
-            var value = counter.NextValue();
-            return value > 0 && value < 500 ? value - 273.15 : null;
-        }
-        catch
-        {
-            return null;
-        }
+        // PDH 直读，避免依赖 System.Diagnostics.PerformanceCounter（来自 WindowsDesktop 框架）
+        return AcpiThermalZoneCounter.Read();
     }
 
     public void Dispose()

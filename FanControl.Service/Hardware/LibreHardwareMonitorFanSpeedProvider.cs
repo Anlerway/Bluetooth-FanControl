@@ -16,17 +16,17 @@ public sealed class LibreHardwareMonitorFanSpeedProvider : IFanSpeedProvider
         return Task.Run(
             () =>
             {
+                // 硬件刷新由 LhmComputerHost 统一节流，与温度 Provider 共享同一次 Update
+                LhmComputerHost.EnsureFresh();
                 var computer = LhmComputerHost.Get();
                 double? rpm = null;
 
                 foreach (var hardware in computer.Hardware)
                 {
-                    hardware.Update();
                     rpm = Merge(rpm, CollectFan(hardware));
 
                     foreach (var subHardware in hardware.SubHardware)
                     {
-                        subHardware.Update();
                         rpm = Merge(rpm, CollectFan(subHardware));
                     }
                 }

@@ -1,9 +1,8 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- windows10.0.x 目标框架提供 Windows.Devices 投影，用于 BLE GATT -->
-    <TargetFramework>net8.0-windows10.0.19041.0</TargetFramework>
-    <UseWindowsForms>true</UseWindowsForms>
+    <!-- BLE 已改 Win32 P/Invoke（bluetoothleapis + SetupAPI），不再需要 windows10.0.x 的 WinRT 投影（约 24 MB） -->
+    <TargetFramework>net8.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
@@ -11,7 +10,8 @@
 
   <ItemGroup>
     <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.6" />
-    <PackageReference Include="Microsoft.Extensions.Hosting" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Extensions.Logging" Version="8.0.1" />
     <PackageReference Include="System.IO.Ports" Version="10.0.3" />
     <PackageReference Include="System.Management" Version="10.0.2" />
   </ItemGroup>

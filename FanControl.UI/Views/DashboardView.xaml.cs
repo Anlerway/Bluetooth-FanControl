@@ -11,6 +11,7 @@ public partial class DashboardView : System.Windows.Controls.UserControl
     private readonly DispatcherTimer _timer;
     private DateTimeOffset _lastTimestamp;
     private bool _hasData;
+    private bool _refreshPending;
 
     public DashboardView(FanControlRuntime runtime)
     {
@@ -20,14 +21,13 @@ public partial class DashboardView : System.Windows.Controls.UserControl
         _timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         _timer.Tick += (_, _) => RefreshData();
 
-        Loaded += (_, _) => _timer.Start();
-        Unloaded += (_, _) => _timer.Stop();
-
         Loaded += (_, _) =>
         {
-            // 数据到达即时刷新：不能在后台线程访问 UI 属性，直接切回 UI 线程
+            _timer.Start();
+            // 数据到达即时刷新：事件在后台线程触发，这里只入队，刷新在 UI 线程执行
             _runtime.DataChanged += OnRuntimeDataChanged;
             _runtime.TemperatureSourceChanged += OnSourceChanged;
+            RefreshData();
         };
 
         Unloaded += (_, _) =>
@@ -41,8 +41,21 @@ public partial class DashboardView : System.Windows.Controls.UserControl
 
     private void OnRuntimeDataChanged(object? sender, EventArgs e)
     {
-        // 只能在 UI 线程访问 Window.GetWindow；这里只入队，可见性判断放在 RefreshData 里（UI 线程执行）
-        Dispatcher.BeginInvoke(RefreshData);
+        // 采样周期可低到 100 ms，事件比 UI 渲染更快：同一时刻只排一次刷新，
+        // 多余事件由 _refreshPending 合并，避免 Dispatcher 队列堆积成内存尖峰
+        if (_refreshPending)
+        {
+            return;
+        }
+
+        _refreshPending = true;
+        Dispatcher.BeginInvoke(
+            DispatcherPriority.Background,
+            new Action(() =>
+            {
+                _refreshPending = false;
+                RefreshData();
+            }));
     }
 
     private void OnSourceChanged(object? sender, EventArgs e)

@@ -27,19 +27,6 @@ public partial class MainWindow : Window
         _statusTimer.Tick += (_, _) => UpdateStatus();
         _statusTimer.Start();
 
-        var memoryTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(15) };
-        memoryTimer.Tick += (_, _) =>
-        {
-            if (!IsVisible)
-            {
-                // 先强制回收托管垃圾，再裁剪工作集，效果更好
-                GC.Collect();
-                GC.WaitForPendingFinalizers();
-                MemoryHelper.Trim();
-            }
-        };
-        memoryTimer.Start();
-
         SourceInitialized += (_, _) => ApplyDarkTitleBar(ThemeService.IsDark);
         Closing += MainWindow_Closing;
         Loaded += (_, _) => ThemeService.ApplyThemeType(((App)Application.Current).Runtime.CurrentConfig.Theme);
@@ -97,7 +84,6 @@ public partial class MainWindow : Window
         {
             e.Cancel = true;
             Hide();
-            MemoryHelper.Trim();
         }
     }
 

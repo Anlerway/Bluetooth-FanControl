@@ -1,28 +1,6 @@
-using System.Diagnostics;
 using System.IO;
-using System.Runtime.InteropServices;
 
 namespace FanControl.UI;
-
-internal static class MemoryHelper
-{
-    [DllImport("kernel32.dll")]
-    private static extern bool SetProcessWorkingSetSize(IntPtr process, IntPtr min, IntPtr max);
-
-    /// <summary>裁剪进程工作集（G-Helper 同款做法），后台驻留时回收内存。</summary>
-    public static void Trim()
-    {
-        try
-        {
-            using var process = Process.GetCurrentProcess();
-            SetProcessWorkingSetSize(process.Handle, new IntPtr(-1), new IntPtr(-1));
-        }
-        catch
-        {
-            // 忽略裁剪失败
-        }
-    }
-}
 
 internal static class CrashLog
 {
