@@ -27,6 +27,8 @@
 | ![Settings](screenshots/en3.png) | ![About](screenshots/en4.png) |
 
 > The UI ships in Simplified Chinese and English. Switch it in **Settings → Language**; the choice is stored in `AppConfig.Language` and applied on the next start too. The screenshots above are the English UI.
+>
+> Settings are grouped into five cards — Temperature & RPM, Fan control, Connection, System, Appearance & notifications. Serial and Bluetooth rows only show the set that matches the current link type.
 
 ## Overview
 

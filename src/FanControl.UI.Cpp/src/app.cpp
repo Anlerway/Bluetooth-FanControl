@@ -103,17 +103,8 @@ bool App::Init(HWND hwnd) {
                                    reinterpret_cast<IUnknown**>(&dw_)))) return false;
     CreateFormats();
 
-    curve_ = { {30, 20}, {50, 30}, {65, 48}, {75, 70}, {85, 90}, {95, 100} };
-    // 先铺满 3 分钟历史，避免首次打开时趋势图为空
-    for (int i = 0; i < 180; ++i) {
-        double tt = static_cast<double>(i);
-        cpuHist_.emplace_back(tt, 46.0 + 9.0 * std::sin(tt / 17.0) + 2.0 * std::sin(tt / 3.1));
-        gpuHist_.emplace_back(tt, 52.0 + 11.0 * std::sin(tt / 23.0 + 1.2));
-        pwmHist_.emplace_back(tt, 30.0 + 26.0 * std::sin(tt / 19.0 + 0.4));
-    }
-    snap_.cpu = cpuHist_.back().second;
-    snap_.gpu = gpuHist_.back().second;
-    snap_.pwm = static_cast<int>(pwmHist_.back().second);
+    // 界面不编造数据：曲线等后台配置下发，趋势图在收到第一帧 state 时用真实值铺满（见 ApplyState）。
+    // 这两处以前各塞了一份假数据（6 点曲线 + 180 个正弦历史点），首次打开会显示根本不存在的曲线。
     const bool ok = CreateTarget();
     // 单进程：界面 DLL 由 FanControl.exe 在进程内加载，后台从一开始就是「已连接」
     backendUp_ = true;
@@ -620,68 +611,65 @@ std::wstring SourceLabel(const std::wstring& value) {
 void App::DrawSettings(float x, float y, float w) {
     const float top = y;
     const float rowH = 64.0f;
+    const float headerH = 44.0f;  // 与 Card 的标题区一致：内容从标题下 44 DIP 开始
+    const float cardGap = 16.0f;
+    std::vector<float> separators;  // 行分隔线留到最后统一画，否则会被行的悬停底色盖住
 
-    auto groupTitle = [&](const wchar_t* title) {
-        Text(title, D2D1::RectF(x, y, x + w, y + 22), fSmall_, theme_.textSecondary);
-        y += 26;
-    };
-    auto cardTop = [&](int rows) {
-        Card(x, y, w, L"", rows * rowH + 8);
-        return y + 4;
+    float ry = y;
+    auto beginCard = [&](const wchar_t* title, int rows) {
+        const float height = headerH + rows * rowH + 8.0f;
+        Card(x, y, w, fc::T(title), height);
+        for (int i = 1; i < rows; ++i) separators.push_back(y + headerH + i * rowH);
+        ry = y + headerH;
+        y += height + cardGap;
     };
 
-    // 温度与风扇（对应 1.3.0 第一张卡）
-    groupTitle(fc::T(L"温度与风扇"));
-    {
-        const bool manual = config_.fanControlMode == L"Manual";
-        const int rows = 5 + (manual ? 1 : 0) + 1 + (config_.smoothingEnabled ? 1 : 0);
-        float ry = cardTop(rows);
-        RowCombo(x, ry, w, rowH, L"set:tempsrc", fc::T(L"温度来源"), fc::T(L"CPU 温度的读取方式"),
-                 SourceLabel(config_.temperatureSource));
+    // 1) 温度与转速：只放「数据从哪来」，控制行为放到下一张卡
+    beginCard(L"温度与转速", 4);
+    RowCombo(x, ry, w, rowH, L"set:tempsrc", fc::T(L"温度来源"), fc::T(L"CPU 温度的读取方式"),
+             SourceLabel(config_.temperatureSource));
+    ry += rowH;
+    RowCombo(x, ry, w, rowH, L"set:gpusrc", fc::T(L"GPU 温度源"), fc::T(L"显卡温度的读取方式"), GpuSourceLabel());
+    ry += rowH;
+    RowCombo(x, ry, w, rowH, L"set:gpusel", fc::T(L"GPU 选择"), fc::T(L"多显卡时指定读取哪一块"),
+             config_.gpuSelection == L"Auto" ? std::wstring(fc::T(L"自动")) : config_.gpuSelection);
+    ry += rowH;
+    RowCombo(x, ry, w, rowH, L"set:fansrc", fc::T(L"转速来源"), fc::T(L"风扇转速的读取方式"),
+             SourceLabel(config_.fanSpeedSource));
+
+    // 2) 风扇控制：模式与平滑放在一起，按模式/开关条件显示行
+    const bool manual = config_.fanControlMode == L"Manual";
+    beginCard(L"风扇控制", 2 + (manual ? 1 : 0) + (config_.smoothingEnabled ? 1 : 0));
+    RowCombo(x, ry, w, rowH, L"set:mode", fc::T(L"控制模式"), fc::T(L"决定 PWM 由谁计算"), ModeLabel(config_.fanControlMode));
+    ry += rowH;
+    if (manual) {
+        RowSlider(x, ry, w, rowH, L"set:manualpwm", fc::T(L"手动 PWM"), fc::T(L"手动模式下直接指定占空比"),
+                  config_.manualPwmPercent, 0, 100,
+                  Fmt(L"%d %%", static_cast<int>(std::lround(config_.manualPwmPercent))));
         ry += rowH;
-        RowCombo(x, ry, w, rowH, L"set:gpusrc", fc::T(L"GPU 温度源"), fc::T(L"显卡温度的读取方式"),
-                 GpuSourceLabel());
-        ry += rowH;
-        RowCombo(x, ry, w, rowH, L"set:gpusel", fc::T(L"GPU 选择"), fc::T(L"多显卡时指定读取哪一块"),
-                 config_.gpuSelection == L"Auto" ? std::wstring(fc::T(L"自动")) : config_.gpuSelection);
-        ry += rowH;
-        RowCombo(x, ry, w, rowH, L"set:fansrc", fc::T(L"转速来源"), fc::T(L"风扇转速的读取方式"),
-                 SourceLabel(config_.fanSpeedSource));
-        ry += rowH;
-        RowCombo(x, ry, w, rowH, L"set:mode", fc::T(L"控制模式"), fc::T(L"决定 PWM 由谁计算"),
-                 ModeLabel(config_.fanControlMode));
-        ry += rowH;
-        if (manual) {
-            RowSlider(x, ry, w, rowH, L"set:manualpwm", fc::T(L"手动 PWM"), fc::T(L"手动模式下直接指定占空比"),
-                      config_.manualPwmPercent, 0, 100,
-                      Fmt(L"%d %%", static_cast<int>(std::lround(config_.manualPwmPercent))));
-            ry += rowH;
-        }
-        RowToggle(x, ry, w, rowH, L"set:smoothenable", fc::T(L"平滑输出"), fc::T(L"让 PWM 变化有过渡"),
-                  config_.smoothingEnabled);
-        ry += rowH;
-        if (config_.smoothingEnabled) {
-            RowSlider(x, ry, w, rowH, L"set:smooth", fc::T(L"平滑窗口"), fc::T(L"PWM 变化的过渡时间"),
-                      config_.pwmSmoothingWindowSeconds, 0.5, 30.0,
-                      Fmt(L"%.1f s", config_.pwmSmoothingWindowSeconds));
-            ry += rowH;
-        }
-        y += rows * rowH + 8 + 20;
+    }
+    RowToggle(x, ry, w, rowH, L"set:smoothenable", fc::T(L"平滑输出"), fc::T(L"让 PWM 变化有过渡"),
+              config_.smoothingEnabled);
+    ry += rowH;
+    if (config_.smoothingEnabled) {
+        RowSlider(x, ry, w, rowH, L"set:smooth", fc::T(L"平滑窗口"), fc::T(L"PWM 变化的过渡时间"),
+                  config_.pwmSmoothingWindowSeconds, 0.5, 30.0,
+                  Fmt(L"%.1f s", config_.pwmSmoothingWindowSeconds));
     }
 
-    // 通信（对应 1.3.0 第二张卡）
-    groupTitle(fc::T(L"通信"));
-    {
-        const int rows = 8;
-        float ry = cardTop(rows);
-        RowCombo(x, ry, w, rowH, L"set:comm", fc::T(L"通信方式"), fc::T(L"蓝牙 BLE 或串口"),
-                 config_.communicationType == L"Com" ? fc::T(L"串口") : fc::T(L"蓝牙 BLE"));
-        ry += rowH;
+    // 3) 通信：串口/蓝牙只显示当前方式用得上的行，另一套收起来
+    const bool serial = config_.communicationType == L"Com";
+    beginCard(L"通信", 2 + (serial ? 2 : 4));
+    RowCombo(x, ry, w, rowH, L"set:comm", fc::T(L"通信方式"), fc::T(L"蓝牙 BLE 或串口"),
+             serial ? fc::T(L"串口") : fc::T(L"蓝牙 BLE"));
+    ry += rowH;
+    if (serial) {
         RowCombo(x, ry, w, rowH, L"set:comport", fc::T(L"串口端口"), fc::T(L"与风扇相连的 COM 口"), config_.comPort);
         ry += rowH;
         RowCombo(x, ry, w, rowH, L"set:baud", fc::T(L"波特率"), fc::T(L"串口通信速率"),
                  std::to_wstring(config_.comBaudRate));
         ry += rowH;
+    } else {
         RowCombo(x, ry, w, rowH, L"set:bledev", fc::T(L"蓝牙设备"), fc::T(L"已配对的 NUS 风扇"), DeviceLabel());
         ry += rowH;
         RowSlider(x, ry, w, rowH, L"set:blepoll", fc::T(L"BLE 轮询"), fc::T(L"发送温度命令的间隔"),
@@ -694,48 +682,41 @@ void App::DrawSettings(float x, float y, float w) {
         RowToggle(x, ry, w, rowH, L"set:autoreconnect", fc::T(L"自动重连"), fc::T(L"断开后自动尝试恢复"),
                   config_.autoReconnectBle);
         ry += rowH;
-        RowStatus(x, ry, w, rowH, L"set:connstate", fc::T(L"连接状态"), fc::T(L"设备链路"), ConnectionLabel());
-        y += rows * rowH + 8 + 20;
     }
+    RowStatus(x, ry, w, rowH, L"set:connstate", fc::T(L"连接状态"), fc::T(L"设备链路"), ConnectionLabel());
 
-    // 系统（对应 1.3.0 第三张卡）
-    groupTitle(fc::T(L"系统"));
-    {
-        const int rows = 9;
-        float ry = cardTop(rows);
-        RowSlider(x, ry, w, rowH, L"set:poll", fc::T(L"采样间隔"), fc::T(L"读取传感器的周期"),
-                  config_.pollIntervalMilliseconds / 1000.0, 0.1, 5.0,
-                  Fmt(L"%.1f s", config_.pollIntervalMilliseconds / 1000.0));
-        ry += rowH;
-        RowToggle(x, ry, w, rowH, L"set:autostart", fc::T(L"开机自启"), fc::T(L"登录后自动启动 FanControl"), autostart_);
-        ry += rowH;
-        RowCombo(x, ry, w, rowH, L"set:datadir", fc::T(L"数据目录"), fc::T(L"配置与日志的存放位置（重启后生效）"),
-                 DataDirLabel());
-        ry += rowH;
-        RowToggle(x, ry, w, rowH, L"set:logenabled", fc::T(L"日志记录"), fc::T(L"把运行日志写入数据目录"), logEnabled_);
-        ry += rowH;
-        RowCombo(x, ry, w, rowH, L"set:theme", fc::T(L"应用主题"), fc::T(L"跟随系统 / 深色 / 浅色"), ThemeLabel());
-        ry += rowH;
-        RowCombo(x, ry, w, rowH, L"set:lang", fc::T(L"语言"), fc::T(L"界面语言"), LangLabel());
-        ry += rowH;
-        RowCombo(x, ry, w, rowH, L"set:unit", fc::T(L"温度单位"), fc::T(L"仪表盘与曲线显示单位"), UnitLabel());
-        ry += rowH;
-        RowToggle(x, ry, w, rowH, L"set:notify", fc::T(L"断连通知"), fc::T(L"蓝牙断开时弹出系统通知"),
-                  config_.notifyOnBleDisconnect);
-        ry += rowH;
-        RowToggle(x, ry, w, rowH, L"set:notifytemp", fc::T(L"温度异常通知"), fc::T(L"温度数据源读取失败时提示"),
-                  config_.notifyOnTemperatureError);
-        y += rows * rowH + 8 + 20;
-    }
+    // 4) 系统：采样与启动行为
+    beginCard(L"系统", 4);
+    RowSlider(x, ry, w, rowH, L"set:poll", fc::T(L"采样间隔"), fc::T(L"读取传感器的周期"),
+              config_.pollIntervalMilliseconds / 1000.0, 0.1, 5.0,
+              Fmt(L"%.1f s", config_.pollIntervalMilliseconds / 1000.0));
+    ry += rowH;
+    RowToggle(x, ry, w, rowH, L"set:autostart", fc::T(L"开机自启"), fc::T(L"登录后自动启动 FanControl"), autostart_);
+    ry += rowH;
+    RowCombo(x, ry, w, rowH, L"set:datadir", fc::T(L"数据目录"), fc::T(L"配置与日志的存放位置（重启后生效）"),
+             DataDirLabel());
+    ry += rowH;
+    RowToggle(x, ry, w, rowH, L"set:logenabled", fc::T(L"日志记录"), fc::T(L"把运行日志写入数据目录"), logEnabled_);
+
+    // 5) 外观与通知：只影响界面显示与提示
+    beginCard(L"外观与通知", 5);
+    RowCombo(x, ry, w, rowH, L"set:theme", fc::T(L"应用主题"), fc::T(L"跟随系统 / 深色 / 浅色"), ThemeLabel());
+    ry += rowH;
+    RowCombo(x, ry, w, rowH, L"set:lang", fc::T(L"语言"), fc::T(L"界面语言"), LangLabel());
+    ry += rowH;
+    RowCombo(x, ry, w, rowH, L"set:unit", fc::T(L"温度单位"), fc::T(L"仪表盘与曲线显示单位"), UnitLabel());
+    ry += rowH;
+    RowToggle(x, ry, w, rowH, L"set:notify", fc::T(L"断连通知"), fc::T(L"蓝牙断开时弹出系统通知"),
+              config_.notifyOnBleDisconnect);
+    ry += rowH;
+    RowToggle(x, ry, w, rowH, L"set:notifytemp", fc::T(L"温度异常通知"), fc::T(L"温度数据源读取失败时提示"),
+              config_.notifyOnTemperatureError);
+
+    for (float sy : separators) Line(x + 16.0f, sy, x + w - 16.0f, sy, theme_.gridLine);
 
     // 重新加载：把界面上的值从后台再取一遍（1.3.0 的「重新加载」按钮）
     Chip(x, y, 120, 34, fc::T(L"重新加载"), false, L"settings:reload");
     y += 34 + 18;
-
-
-
-
-
     contentHeight_ = y - top + 24.0f;
 }
 
@@ -785,6 +766,12 @@ void App::DrawCurve(float x, float y, float w) {
         const bool selected = static_cast<int>(i) == curveSelected_;
         FillRound(D2D1::RectF(px - 6, py - 6, px + 6, py + 6), 6.0f, selected ? theme_.accent : theme_.cardBg);
         StrokeRound(D2D1::RectF(px - 6, py - 6, px + 6, py + 6), 6.0f, theme_.accent, 2.0f);
+    }
+    if (points.empty()) {
+        // 没有曲线点时给出提示，而不是留一张空白图表让人以为坏了
+        const float mid = (plot.top + plot.bottom) / 2;
+        TextCentered(fc::T(L"曲线为空：点「添加点」，或直接在图里点一下"),
+                     D2D1::RectF(plot.left, mid - 12, plot.right, mid + 12), fBody_, theme_.textTertiary);
     }
 
     // 1.3.0 曲线页的四个按钮：添加点 / 删除点 / 重置 / 保存
@@ -1373,7 +1360,6 @@ void App::OnIpcMessage(void* payload) {
 }
 
 void App::ApplyConfig(const fc::Config& config) {
-    const bool first = !hasConfig_;
     config_ = config;
     hasConfig_ = true;
     // 语言跟着后台配置走：后台是唯一写盘方，换语言后重启界面仍然是同一种
@@ -1385,15 +1371,12 @@ void App::ApplyConfig(const fc::Config& config) {
     smoothMs_ = std::clamp(static_cast<int>(config.pwmSmoothingWindowSeconds * 1000.0), 100, 3000);
     RestoreSliderValue();
     if (dragIndex_ < 0) {
-        // 拖拽期间不覆盖用户正在编辑的曲线
-        if (first || curve_.size() != config.curve.size()) {
-            curve_.clear();
-            for (const auto& point : config.curve) curve_.push_back(Point2{ point.x, point.y });
-        }
-        if (first || rpmCurve_.size() != config.rpmCurve.size()) {
-            rpmCurve_.clear();
-            for (const auto& point : config.rpmCurve) rpmCurve_.push_back(Point2{ point.x, point.y });
-        }
+        // 拖拽期间不覆盖用户正在编辑的曲线；其余时候按内容同步。
+        // 以前只在点数不同时才拷贝，配置里点数恰好等于界面的假数据时，界面会一直显示那份假曲线。
+        curve_.clear();
+        for (const auto& point : config.curve) curve_.push_back(Point2{ point.x, point.y });
+        rpmCurve_.clear();
+        for (const auto& point : config.rpmCurve) rpmCurve_.push_back(Point2{ point.x, point.y });
     }
     if (!hasInitial_) {
         const bool wantDark = config.theme == L"Dark" ? true
