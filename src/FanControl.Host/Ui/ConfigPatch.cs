@@ -68,7 +68,7 @@ internal static class ConfigPatch
         }
     }
 
-    /// <summary>温度-PWM 曲线：按温度升序、至少 2 个点，范围温度 0-120 / PWM 0-100。</summary>
+    /// <summary>温度-输出 PWM 曲线：按温度升序、至少 2 个点，范围温度 0-120 / 输出 PWM 0-100。</summary>
     public static bool TrySetCurve(AppConfig current, IReadOnlyList<(double Temperature, double Pwm)> points, out AppConfig updated, out ErrorInfo? error)
     {
         if (points.Count < 2)
@@ -88,7 +88,7 @@ internal static class ConfigPatch
         if (Math.Abs(normalized[normalized.Count - 1].PwmPercent - normalized[0].PwmPercent) < 0.01 && normalized.Count == 2)
         {
             updated = current;
-            error = ErrorInfo.Of("config.curveFlat", "两端 PWM 不能相同。");
+            error = ErrorInfo.Of("config.curveFlat", "两端输出 PWM 不能相同。");
             return false;
         }
 

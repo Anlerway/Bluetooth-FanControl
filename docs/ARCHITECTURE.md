@@ -29,6 +29,7 @@ FanControl.exe (requireAdministrator, 常驻)
 - 窗口不等于进程：关掉窗口只是销毁窗口、退出界面线程，托盘与采样照常；托盘菜单「打开主界面」会重新 `FcUiRun()` 建出窗口。
 - `--autostart`（计划任务用）只留托盘、不弹窗口；普通启动（安装器、快捷方式、开始菜单）直接显示窗口。
 - `--page=N`（0 仪表盘 / 1 设置 / 2 曲线 / 3 关于）只决定界面**第一次**建窗口时停在哪一页，截图脚本与自动化用它；用户之后在窗口里切换不受影响。
+- `FANCONTROL_EXIT_AFTER=秒` 到点走一遍与托盘「退出」完全相同的收尾路径，无人值守时验证退出用；`FANCONTROL_MEMLOG=1` 每 10 秒把托管堆/私有内存/工作集追加到 `%TEMP%\fc-mem.log`，排查内存用。两个都只读环境变量，不设就没有这段代码路径。
 - 开机自启：计划任务 `FanControl`，动作 <安装目录>\FanControl.exe --autostart；`AutostartManager` 负责创建/删除与查询。
 - 没有命名管道、没有启动器、没有 Job Object：进程组的需求随单一进程一起消失。
 
@@ -52,19 +53,21 @@ FanControl.exe (requireAdministrator, 常驻)
 
 ## 资源占用（本机实测）
 
-测试机：Windows 11 / 2560×1600 `150%，宿主以 `dotnet FanControl.dll` 运行（沙箱非管理员，CPU 温度读不到，其余传感器正常），温度源临时设为「模拟数据」以便出图。
+测试机：Windows 11 / 2560×1600 / 150% 缩放，`dotnet FanControl.dll`（Release 构建，沙箱非管理员），LibreHardwareMonitor 开 CPU + GPU + 主板模块，界面停在仪表盘静置。
 
 | 形态 | 私有内存 | 工作集 | 线程 |
 | --- | --- | --- | --- |
-| 单一进程 `FanControl.exe`（界面打开、实时收数据） | 35 MB | 77 MB | 42–43 |
+| 单一进程 `FanControl.exe`（界面打开、实时收数据） | 46–48 MB（峰值 50） | 88–94 MB | 33–40 |
 | 同一进程，关掉界面只剩托盘 | 17–20 MB | 18–20 MB | 41–42 |
 | 拆分版对照：后台 `FanControl.Host.exe` | 42 MB | 85 MB | 26–33 |
 | 拆分版对照：界面 `FanControl.UI.exe` | 26 MB | 43 MB | 24 |
 | 1.3.0 单进程 WPF 版（对照） | 82 MB | — | 24 |
 
-关掉窗口后进程仍驻留托盘，所以退到托盘时会主动收一次：界面的 `WM_DESTROY` 发 `{"cmd":"uiClosed"}`，宿主等 600 ms 再 `SetProcessWorkingSetSize(-1, -1)`（`Ui/MemoryTrim.cs`），实测工作集从 104 MB 掉到 18 MB。
+托管堆里活数据不到 1 MB（`GC.GetGCMemoryInfo().HeapSizeBytes` 常驻 0.6–0.7 MB），看到的涨落全是垃圾：采样栈每秒造几十 KB，Gen0 要攒到 15 MB 才回收一次，静置 3.5 分钟的进程就会一路爬到 60 MB 私有内存再掉回来。现在的做法是两处主动回收——界面起来 15 秒后整一次代 2（`Program.ShowUi`，把启动期 DWrite/D2D 与采样栈留下的垃圾当场还掉），以及 `CommandRouter.PushLoopAsync` 里每 60 秒一次后台代 0（`IdleCollectSeconds`，不阻塞绘制，代价几毫秒）。垃圾窗口从 15 MB 压到 4 MB 以内，私有内存稳定在 46–48 MB、工作集 88–94 MB，不再有那截锯齿。
 
-LibreHardwareMonitor 的模块是内存大头：全开（CPU+GPU+主板+控制器）时工作集 119 MB、私有 65 MB；只开 CPU 时 77 / 35 MB。其中 GPU 模块要加载 NVAPI/ADL，约 +37 MB，主板·EC 约 +8 MB，因此现在按配置按需开。
+关掉窗口后进程仍驻留托盘，所以退到托盘时会主动收一次：界面的 `WM_DESTROY` 发 `{"cmd":"uiClosed"}`，宿主等 600 ms 先 `GC.Collect` 再 `SetProcessWorkingSetSize(-1, -1)`（`Ui/MemoryTrim.cs`），实测（Release，GPU 模块开）私有内存 47 → 27 MB、工作集 91 → 16 MB，界面重开时再由 D2D/DWrite 拉回去。
+
+LibreHardwareMonitor 的模块是内存大头：只开 CPU 时私有 35 MB / 工作集 77 MB，再开 GPU 约 +37 MB、主板·EC 约 +8 MB（GPU 模块要加载 NVAPI/ADL）。因此模块按配置按需开（`LhmComputerHost.Configure`），不用 GPU 温度的用户拿到的就是 35 MB 那一档。
 
 界面渲染目标固定用 `D2D1_RENDER_TARGET_TYPE_SOFTWARE`：同一台机器上硬件 `HwndRenderTarget` 会把私有内存推到 65 MB、线程涨到 45 个（多出来的是显卡驱动线程），而界面只在收到状态帧或鼠标交互时重绘（约 2.5 次/秒），软件光栅的 CPU 代价约 4% 单核。
 

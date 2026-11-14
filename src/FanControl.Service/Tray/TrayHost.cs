@@ -39,8 +39,16 @@ public sealed class TrayHost : IDisposable
 
     public void Dispose()
     {
-        _window?.Shutdown();
-        _thread?.Join(TimeSpan.FromSeconds(2));
+        // 退出时托盘线程可能还卡在弹出菜单里：这里只尽力收尾，不把异常抛给宿主进程
+        try
+        {
+            _window?.Shutdown();
+            _thread?.Join(TimeSpan.FromSeconds(2));
+        }
+        catch (Exception)
+        {
+        }
+
         _window = null;
     }
 }

@@ -46,10 +46,10 @@ A full remake built on top of the 垃圾研究社 open-source hardware:
 
 - **Multiple temperature sources**: LibreHardwareMonitor / ASUS ATKACPI / WMI / AIDA64 / NVIDIA-SMI / ADL / Lenovo WMI;
 - **Independent CPU / GPU sources** — multi-GPU users can freely choose which GPU to read;
-- **Adjustable temperature-fan curves**: 5 control modes (manual / CPU temp / GPU temp / mixed max / mixed average / target RPM), editable temperature and RPM curves, with fan-curve smoothing;
+- **Adjustable temperature-fan curves**: 5 control modes (manual / CPU temp / GPU temp / mixed max / mixed average / target RPM), temperature and RPM curves edited side by side, applied and saved instantly with a 32-step undo, plus fan-curve smoothing;
 - **Auto-reconnect**: BLE / COM dual channels; automatically retries reconnection on disconnect, with manual reconnect support;
 - **Auto-start**: starts quietly in the tray at logon and connects over Bluetooth directly;
-- **Control dashboard**: live temperature / PWM / RPM tiles plus custom trend charts (CPU/GPU/PWM);
+- **Control dashboard**: live temperature / output PWM / CPU fan speed tiles plus custom trend charts (CPU / GPU / output PWM), and a 4-minute output-PWM trace on the curve page;
 - **Tray resident**: tray temperature preview, disconnect/error notifications, close-to-tray.
 
 ## Software Settings

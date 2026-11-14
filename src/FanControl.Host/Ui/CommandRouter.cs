@@ -40,10 +40,15 @@ internal sealed class CommandRouter : IAsyncDisposable
     // 复用同一个 HttpClient：每次 new 会各带一套连接池与定时器，是长期进程的隐形泄漏
     private static readonly HttpClient Http = CreateHttpClient();
 
+    // 采样栈每秒只造几十 KB 垃圾，Gen0 预算却要攒到 15 MB 才回收一次——长期的托盘进程没必要
+    // 把这段垃圾一直压在自己身上，攒够 60 秒就主动收一次代 0（后台、不阻塞，代价几毫秒）。
+    private const int IdleCollectSeconds = 60;
+
     private Task? _pushLoop;
     private volatile bool _autostart;
     private string? _lastSignature;
     private long _lastPushTicks;
+    private long _lastCollectTicks = Environment.TickCount64;
 
     public CommandRouter(FanControlRuntime runtime, SystemSettings system, ILogger logger)
     {
@@ -74,6 +79,12 @@ internal sealed class CommandRouter : IAsyncDisposable
             catch (OperationCanceledException)
             {
                 break;
+            }
+
+            if (Environment.TickCount64 - _lastCollectTicks >= IdleCollectSeconds * 1000L)
+            {
+                _lastCollectTicks = Environment.TickCount64;
+                GC.Collect(0, GCCollectionMode.Forced, blocking: false, compacting: false);
             }
 
             // 界面没开就不生成 JSON：一次性进程里唯一消费者就是那个窗口。
@@ -204,6 +215,8 @@ internal sealed class CommandRouter : IAsyncDisposable
                     _ = Task.Run(async () =>
                     {
                         await Task.Delay(600).ConfigureAwait(false);
+                        // 先把托管垃圾还掉再 trim：顺序反了的话，回收出来的空闲页又会被算进工作集
+                        GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: true);
                         MemoryTrim.Run();
                     });
                     break;
@@ -427,6 +440,18 @@ internal sealed class CommandRouter : IAsyncDisposable
     });
 
     public async ValueTask DisposeAsync()
+    {
+        // 退出路径上的异常一律吞掉：这里抛出去会被 Main 的 catch 当成「启动失败」弹框
+        try
+        {
+            await DisposeCoreAsync().ConfigureAwait(false);
+        }
+        catch (Exception)
+        {
+        }
+    }
+
+    private async ValueTask DisposeCoreAsync()
     {
         _cts.Cancel();
         if (_pushLoop is not null)

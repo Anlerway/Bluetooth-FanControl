@@ -217,6 +217,14 @@ void App::Text(const std::wstring& s, D2D1_RECT_F r, IDWriteTextFormat* fmt, D2D
     rt_->DrawTextW(s.c_str(), static_cast<UINT32>(s.size()), fmt, r, b, D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
 
+void App::TextMiddle(const std::wstring& s, D2D1_RECT_F r, IDWriteTextFormat* fmt, D2D1_COLOR_F c) {
+    ID2D1SolidColorBrush* b = Brush(c);
+    if (!b) return;
+    fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+    fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    rt_->DrawTextW(s.c_str(), static_cast<UINT32>(s.size()), fmt, r, b, D2D1_DRAW_TEXT_OPTIONS_CLIP);
+}
+
 void App::TextCentered(const std::wstring& s, D2D1_RECT_F r, IDWriteTextFormat* fmt, D2D1_COLOR_F c) {
     ID2D1SolidColorBrush* b = Brush(c);
     if (!b) return;
@@ -427,7 +435,7 @@ void App::RowCombo(float x, float y, float w, float h, const std::wstring& id, c
     D2D1_RECT_F box = D2D1::RectF(x + w - 244, y + h / 2 - 15, x + w - 16, y + h / 2 + 15);
     FillRound(box, 4.0f, theme_.controlBg);
     StrokeRound(box, 4.0f, Hovered(id) ? theme_.accent : theme_.controlBorder);
-    Text(value, D2D1::RectF(box.left + 10, box.top, box.right - 26, box.bottom), fBody_, theme_.textPrimary);
+    TextMiddle(value, D2D1::RectF(box.left + 10, box.top, box.right - 26, box.bottom), fBody_, theme_.textPrimary);
     Glyph(L"\xE70D", D2D1::RectF(box.right - 24, box.top, box.right - 6, box.bottom), 10.0f, theme_.textSecondary);
     // 下拉只认值框（左右各留 8 DIP 余量、整行高）
     AddHit(D2D1::RectF(box.left - 8.0f, y, box.right + 8.0f, y + h), id);
@@ -515,8 +523,8 @@ void App::DrawDashboard(float x, float y, float w) {
     Tile tiles[6] = {
         { fc::T(L"CPU 温度"), snap_.cpu > 0.0 ? Fmt(L"%.1f", snap_.cpu) : L"—", L"°C" },
         { fc::T(L"GPU 温度"), snap_.gpu > 0.0 ? Fmt(L"%.1f", snap_.gpu) : L"—", L"°C" },
-        { fc::T(L"风扇 PWM"), Fmt(L"%d", snap_.pwm), L"%" },
-        { fc::T(L"风扇转速"), snap_.rpm > 0 ? Fmt(L"%d", snap_.rpm) : L"—", L"RPM" },
+        { fc::T(L"输出 PWM"), Fmt(L"%d", snap_.pwm), L"%" },
+        { fc::T(L"CPU 风扇转速"), snap_.rpm > 0 ? Fmt(L"%d", snap_.rpm) : L"—", L"RPM" },
         { fc::T(L"控制模式"), ModeLabel(config_.fanControlMode), L"" },
         { fc::T(L"连接状态"), snap_.deviceConnected ? fc::T(L"已连接") : fc::T(L"未连接"), L"" },
     };
@@ -547,13 +555,15 @@ void App::DrawDashboard(float x, float y, float w) {
     Text(fc::T(L"最近 4 分钟"), D2D1::RectF(x + 16, y + 12, x + w - 200, y + 34), fBodyStrong_,
          theme_.textPrimary);
     // 图例
-    float lx = x + w - 210;
+    // 「输出 PWM」比原来的 “PWM” 长，图例按文字宽度排，不能再写死 66
+    float lx = x + w - 250;
     struct Leg { const wchar_t* name; D2D1_COLOR_F color; };
-    Leg legs[3] = { { L"CPU", theme_.cpuLine }, { L"GPU", theme_.gpuLine }, { L"PWM", theme_.pwmLine } };
+    Leg legs[3] = { { L"CPU", theme_.cpuLine }, { L"GPU", theme_.gpuLine }, { fc::T(L"输出 PWM"), theme_.pwmLine } };
     for (auto& leg : legs) {
         FillRound(D2D1::RectF(lx, y + 20, lx + 8, y + 28), 4.0f, leg.color);
-        Text(leg.name, D2D1::RectF(lx + 12, y + 14, lx + 44, y + 34), fSmall_, theme_.textSecondary);
-        lx += 66;
+        const float lw = MeasureText(leg.name, fSmall_);
+        Text(leg.name, D2D1::RectF(lx + 12, y + 14, lx + 20 + lw, y + 34), fSmall_, theme_.textSecondary);
+        lx += lw + 34;
     }
 
     D2D1_RECT_F plot = D2D1::RectF(x + 44, y + 48, x + w - 20, y + h - 28);
@@ -634,13 +644,13 @@ void App::DrawSettings(float x, float y, float w) {
     RowCombo(x, ry, w, rowH, L"set:gpusel", fc::T(L"GPU 选择"), fc::T(L"多显卡时指定读取哪一块"),
              config_.gpuSelection == L"Auto" ? std::wstring(fc::T(L"自动")) : config_.gpuSelection);
     ry += rowH;
-    RowCombo(x, ry, w, rowH, L"set:fansrc", fc::T(L"转速来源"), fc::T(L"风扇转速的读取方式"),
+    RowCombo(x, ry, w, rowH, L"set:fansrc", fc::T(L"转速来源"), fc::T(L"CPU 风扇转速的读取方式"),
              SourceLabel(config_.fanSpeedSource));
 
     // 2) 风扇控制：模式与平滑放在一起，按模式/开关条件显示行
     const bool manual = config_.fanControlMode == L"Manual";
     beginCard(L"风扇控制", 2 + (manual ? 1 : 0) + (config_.smoothingEnabled ? 1 : 0));
-    RowCombo(x, ry, w, rowH, L"set:mode", fc::T(L"控制模式"), fc::T(L"决定 PWM 由谁计算"), ModeLabel(config_.fanControlMode));
+    RowCombo(x, ry, w, rowH, L"set:mode", fc::T(L"控制模式"), fc::T(L"决定输出 PWM 由谁计算"), ModeLabel(config_.fanControlMode));
     ry += rowH;
     if (manual) {
         RowSlider(x, ry, w, rowH, L"set:manualpwm", fc::T(L"手动 PWM"), fc::T(L"手动模式下直接指定占空比"),
@@ -648,11 +658,11 @@ void App::DrawSettings(float x, float y, float w) {
                   Fmt(L"%d %%", static_cast<int>(std::lround(config_.manualPwmPercent))));
         ry += rowH;
     }
-    RowToggle(x, ry, w, rowH, L"set:smoothenable", fc::T(L"平滑输出"), fc::T(L"让 PWM 变化有过渡"),
+    RowToggle(x, ry, w, rowH, L"set:smoothenable", fc::T(L"平滑输出"), fc::T(L"让输出 PWM 有过渡"),
               config_.smoothingEnabled);
     ry += rowH;
     if (config_.smoothingEnabled) {
-        RowSlider(x, ry, w, rowH, L"set:smooth", fc::T(L"平滑窗口"), fc::T(L"PWM 变化的过渡时间"),
+        RowSlider(x, ry, w, rowH, L"set:smooth", fc::T(L"平滑窗口"), fc::T(L"输出 PWM 变化的过渡时间"),
                   config_.pwmSmoothingWindowSeconds, 0.5, 30.0,
                   Fmt(L"%.1f s", config_.pwmSmoothingWindowSeconds));
     }
@@ -722,74 +732,137 @@ void App::DrawSettings(float x, float y, float w) {
 }
 
 void App::DrawCurve(float x, float y, float w) {
-    const float h = 380.0f;
-    D2D1_RECT_F card = D2D1::RectF(x, y, x + w, y + h);
-    FillRound(card, 8.0f, theme_.cardBg);
-    StrokeRound(card, 8.0f, theme_.cardBorder);
+    // 曲线页：两条映射曲线并排平铺（去掉页签切换），下面是输出 PWM 的实时趋势。
+    // 点哪张图就切到哪条曲线编辑（描边高亮），「添加点 / 删除点 / 重置」都作用在当前曲线。
+    const float gap = 16.0f;
+    const float panelH = 320.0f;
+    const bool side = w >= 760.0f;
+    const float pw = side ? (w - gap) / 2.0f : w;
+    DrawCurvePanel(x, y, pw, panelH, 0, fc::T(L"温度曲线"), fc::T(L"温度 °C → 输出 PWM %"), CurveXMax(0));
+    const float y2 = side ? y : y + panelH + gap;
+    const float x2 = side ? x + pw + gap : x;
+    DrawCurvePanel(x2, y2, pw, panelH, 1, fc::T(L"转速曲线"), fc::T(L"转速 RPM → 输出 PWM %"), CurveXMax(1));
+    float rowY = (side ? y + panelH : y2 + panelH) + 16.0f;
 
-    // 两条曲线用页签切换：温度→PWM（风扇温度曲线）、转速→PWM（目标转速曲线）
-    // 宽度按文字量：英文 “Temperature curve” 比中文长，固定 104 会溢出
-    const float tabW = std::max({ 104.0f,
-        MeasureText(fc::T(L"温度曲线"), fBody_) + 32.0f,
-        MeasureText(fc::T(L"转速曲线"), fBody_) + 32.0f });
-    Chip(x + 16, y + 12, tabW, 30, fc::T(L"温度曲线"), curveTab_ == 0, L"curve:temp");
-    Chip(x + 24 + tabW, y + 12, tabW, 30, fc::T(L"转速曲线"), curveTab_ == 1, L"curve:rpm");
-    Text(curveTab_ == 0 ? fc::T(L"温度 °C → PWM %") : fc::T(L"转速 RPM → PWM %"),
-         D2D1::RectF(x + 40 + 2 * tabW, y + 16, x + w - 16, y + 40), fSmall_, theme_.textSecondary);
-
-    std::vector<Point2>& points = curveTab_ == 0 ? curve_ : rpmCurve_;
-    const double xMax = curveTab_ == 0 ? 120.0 : 10000.0;
-
-    D2D1_RECT_F plot = D2D1::RectF(x + 56, y + 56, x + w - 32, y + h - 48);
-    curvePlot_ = plot;
-    for (int i = 0; i <= 5; ++i) {
-        float gy = plot.top + (plot.bottom - plot.top) * i / 5.0f;
-        Line(plot.left, gy, plot.right, gy, theme_.gridLine);
-        TextRight(Fmt(L"%d", 100 - i * 20), D2D1::RectF(x + 8, gy - 10, plot.left - 10, gy + 10), fSmall_,
-                  theme_.textTertiary);
-        float gx = plot.left + (plot.right - plot.left) * i / 5.0f;
-        Line(gx, plot.top, gx, plot.bottom, theme_.gridLine);
-        TextCentered(Fmt(L"%d", static_cast<int>(std::lround(xMax * i / 5.0))),
-                     D2D1::RectF(gx - 28, plot.bottom + 4, gx + 28, plot.bottom + 24), fSmall_, theme_.textTertiary);
-    }
-    TextCentered(curveTab_ == 0 ? fc::T(L"温度 °C") : fc::T(L"转速 RPM"),
-                 D2D1::RectF(plot.left, plot.bottom + 26, plot.right, plot.bottom + 46), fSmall_,
-                 theme_.textTertiary);
-
-    auto toX = [&](double t) { return plot.left + static_cast<float>(t / xMax) * (plot.right - plot.left); };
-    auto toY = [&](double p) { return plot.bottom - static_cast<float>(p / 100.0) * (plot.bottom - plot.top); };
-
-    for (size_t i = 1; i < points.size(); ++i) {
-        Line(toX(points[i - 1].t), toY(points[i - 1].p), toX(points[i].t), toY(points[i].p), theme_.accent, 2.0f);
-    }
-    for (size_t i = 0; i < points.size(); ++i) {
-        float px = toX(points[i].t), py = toY(points[i].p);
-        const bool selected = static_cast<int>(i) == curveSelected_;
-        FillRound(D2D1::RectF(px - 6, py - 6, px + 6, py + 6), 6.0f, selected ? theme_.accent : theme_.cardBg);
-        StrokeRound(D2D1::RectF(px - 6, py - 6, px + 6, py + 6), 6.0f, theme_.accent, 2.0f);
-    }
-    if (points.empty()) {
-        // 没有曲线点时给出提示，而不是留一张空白图表让人以为坏了
-        const float mid = (plot.top + plot.bottom) / 2;
-        TextCentered(fc::T(L"曲线为空：点「添加点」，或直接在图里点一下"),
-                     D2D1::RectF(plot.left, mid - 12, plot.right, mid + 12), fBody_, theme_.textTertiary);
-    }
-
-    // 1.3.0 曲线页的四个按钮：添加点 / 删除点 / 重置 / 保存
-    float by = y + h + 16;
+    // 没有「保存」按钮：拖动松手、加点、删点、重置都立刻写回宿主，改坏了用「撤回」（最多 32 步）
     float bx = x;
     auto actionChip = [&](const wchar_t* label, bool accent, const wchar_t* id) {
         const float bw = std::max(88.0f, MeasureText(fc::T(label), fBody_) + 32.0f);
-        Chip(bx, by, bw, 32, fc::T(label), accent, id);
+        Chip(bx, rowY, bw, 32, fc::T(label), accent, id);
         bx += bw + 8;
     };
     actionChip(L"添加点", false, L"curve:add");
     actionChip(L"删除点", false, L"curve:del");
     actionChip(L"重置", false, L"reset");
-    actionChip(L"保存", true, L"apply");
-    Text(fc::T(L"拖动圆点调整映射，点击空白处新增点"), D2D1::RectF(bx + 8, by, x + w, by + 32), fSmall_,
-         theme_.textTertiary);
-    contentHeight_ = by + 32 + 24 - y;
+    actionChip(L"撤回", false, L"curve:undo");
+    Text(fc::T(L"拖动圆点调整，点击空白处新增点；改动自动保存"),
+         D2D1::RectF(bx + 8, rowY + 8, x + w, rowY + 32), fSmall_, theme_.textTertiary);
+
+    const float pwmY = rowY + 48.0f;
+    DrawPwmChart(x, pwmY, w);
+    contentHeight_ = pwmY + 210.0f + 24.0f - y;
+}
+
+std::vector<App::Point2>& App::CurvePoints(int which) { return which == 0 ? curve_ : rpmCurve_; }
+
+const std::vector<App::Point2>& App::CurvePoints(int which) const { return which == 0 ? curve_ : rpmCurve_; }
+
+D2D1_RECT_F App::CurvePlot(int which) const { return which == 0 ? curvePlot_ : rpmPlot_; }
+
+void App::DrawCurvePanel(float x, float y, float w, float h, int which, const std::wstring& title,
+                         const std::wstring& axisLabel, double xMax) {
+    const bool active = which == curveActive_;
+    D2D1_RECT_F card = D2D1::RectF(x, y, x + w, y + h);
+    FillRound(card, 8.0f, theme_.cardBg);
+    StrokeRound(card, 8.0f, active ? theme_.accent : theme_.cardBorder, active ? 1.5f : 1.0f);
+    Text(title, D2D1::RectF(x + 16, y + 12, x + w - 150, y + 34), fBodyStrong_,
+         active ? theme_.textPrimary : theme_.textSecondary);
+    TextRight(axisLabel, D2D1::RectF(x + w - 168, y + 14, x + w - 16, y + 34), fSmall_, theme_.textTertiary);
+
+    D2D1_RECT_F plot = D2D1::RectF(x + 52, y + 48, x + w - 20, y + h - 42);
+    if (which == 0) curvePlot_ = plot; else rpmPlot_ = plot;
+
+    for (int i = 0; i <= 5; ++i) {
+        float gy = plot.top + (plot.bottom - plot.top) * i / 5.0f;
+        Line(plot.left, gy, plot.right, gy, theme_.gridLine);
+        TextRight(Fmt(L"%d", 100 - i * 20), D2D1::RectF(x + 4, gy - 10, plot.left - 10, gy + 10), fSmall_,
+                  theme_.textTertiary);
+        float gx = plot.left + (plot.right - plot.left) * i / 5.0f;
+        Line(gx, plot.top, gx, plot.bottom, theme_.gridLine);
+        TextCentered(Fmt(L"%d", static_cast<int>(std::lround(xMax * i / 5.0))),
+                     D2D1::RectF(gx - 28, plot.bottom + 4, gx + 28, plot.bottom + 22), fSmall_, theme_.textTertiary);
+    }
+    TextCentered(which == 0 ? fc::T(L"温度 °C") : fc::T(L"转速 RPM"),
+                 D2D1::RectF(plot.left, plot.bottom + 22, plot.right, plot.bottom + 40), fSmall_,
+                 theme_.textTertiary);
+
+    const std::vector<Point2>& points = CurvePoints(which);
+    auto toX = [&](double t) { return plot.left + static_cast<float>(t / xMax) * (plot.right - plot.left); };
+    auto toY = [&](double p) { return plot.bottom - static_cast<float>(p / 100.0) * (plot.bottom - plot.top); };
+    for (size_t i = 1; i < points.size(); ++i)
+        Line(toX(points[i - 1].t), toY(points[i - 1].p), toX(points[i].t), toY(points[i].p), theme_.accent, 2.0f);
+    for (size_t i = 0; i < points.size(); ++i) {
+        float px = toX(points[i].t), py = toY(points[i].p);
+        const bool selected = active && static_cast<int>(i) == curveSelected_;
+        FillRound(D2D1::RectF(px - 5, py - 5, px + 5, py + 5), 5.0f, selected ? theme_.accent : theme_.cardBg);
+        StrokeRound(D2D1::RectF(px - 5, py - 5, px + 5, py + 5), 5.0f, theme_.accent, 2.0f);
+    }
+    if (points.empty()) {
+        // 没有曲线点时给出提示，而不是留一张空白图表让人以为坏了
+        const float mid = (plot.top + plot.bottom) / 2;
+        TextCentered(fc::T(L"曲线为空：点「添加点」，或直接在图里点一下"),
+                     D2D1::RectF(plot.left, mid - 12, plot.right, mid + 12), fSmall_, theme_.textTertiary);
+    }
+}
+
+void App::DrawPwmChart(float x, float y, float w) {
+    const float h = 210.0f;
+    D2D1_RECT_F card = D2D1::RectF(x, y, x + w, y + h);
+    FillRound(card, 8.0f, theme_.cardBg);
+    StrokeRound(card, 8.0f, theme_.cardBorder);
+    Text(fc::T(L"输出 PWM"), D2D1::RectF(x + 16, y + 12, x + w - 260, y + 34), fBodyStrong_, theme_.textPrimary);
+    Text(fc::T(L"最近 4 分钟"), D2D1::RectF(x + 16, y + 32, x + w - 260, y + 50), fSmall_, theme_.textTertiary);
+    TextRight(Fmt(L"%d %%", snap_.pwm), D2D1::RectF(x + w - 176, y + 10, x + w - 16, y + 40), fH2_, theme_.pwmLine);
+
+    D2D1_RECT_F plot = D2D1::RectF(x + 52, y + 58, x + w - 20, y + h - 26);
+    for (int i = 0; i <= 4; ++i) {
+        float gy = plot.top + (plot.bottom - plot.top) * i / 4.0f;
+        Line(plot.left, gy, plot.right, gy, theme_.gridLine);
+        TextRight(Fmt(L"%d", 100 - i * 25), D2D1::RectF(x + 8, gy - 10, plot.left - 10, gy + 10), fSmall_,
+                  theme_.textTertiary);
+    }
+    if (pwmHist_.size() >= 2) {
+        const float step = (plot.right - plot.left) / (kHistoryPoints - 1);
+        for (size_t i = 1; i < pwmHist_.size(); ++i) {
+            float x1 = plot.left + (i - 1) * step;
+            float x2 = plot.left + i * step;
+            float y1 = plot.bottom - static_cast<float>(pwmHist_[i - 1].second) / 100.0f * (plot.bottom - plot.top);
+            float y2 = plot.bottom - static_cast<float>(pwmHist_[i].second) / 100.0f * (plot.bottom - plot.top);
+            Line(x1, y1, x2, y2, theme_.pwmLine, 1.6f);
+        }
+    } else {
+        const float mid = (plot.top + plot.bottom) / 2;
+        TextCentered(fc::T(L"等待采样…"), D2D1::RectF(plot.left, mid - 12, plot.right, mid + 12), fSmall_,
+                     theme_.textTertiary);
+    }
+}
+
+void App::RecordCurveUndo() {
+    curveUndo_.push_back(CurveUndo{ curve_, rpmCurve_ });
+    while (curveUndo_.size() > 32) curveUndo_.pop_front();
+}
+
+void App::UndoCurve() {
+    if (curveUndo_.empty()) return;
+    CurveUndo snapshot = std::move(curveUndo_.back());
+    curveUndo_.pop_back();
+    curve_ = std::move(snapshot.temp);
+    rpmCurve_ = std::move(snapshot.rpm);
+    curveSelected_ = -1;
+    dragIndex_ = -1;
+    PushCurveToBackend(0);
+    PushCurveToBackend(1);
+    InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
 // 关于页按 1.3.0 的四块内容排：引用库 / 参考项目 / 开源地址 / 检查更新
@@ -1150,8 +1223,8 @@ void App::DrawCombo(float w, float h) {
         const std::wstring id = L"combo:" + std::to_wstring(index);
         const bool selected = !current.empty() && comboItems_[index].label == current;
         if (Hovered(id)) FillRound(row, 4.0f, theme_.controlHover);
-        Text(comboItems_[index].label, D2D1::RectF(row.left + 10, row.top, row.right - 36, row.bottom), fBody_,
-             selected ? theme_.accent : theme_.textPrimary);
+        TextMiddle(comboItems_[index].label, D2D1::RectF(row.left + 10, row.top, row.right - 36, row.bottom), fBody_,
+                   selected ? theme_.accent : theme_.textPrimary);
         if (selected)
             Glyph(L"\xE73E", D2D1::RectF(row.right - 30, row.top, row.right - 8, row.bottom), 12.0f, theme_.accent);
         AddHit(row, id);
@@ -1180,7 +1253,7 @@ void App::Paint() {
     rt_->PushAxisAlignedClip(D2D1::RectF(kSidebarWidth, 0, size.width, clipBottom), D2D1_ANTIALIAS_MODE_ALIASED);
     float top = 28.0f - scroll_;
     const wchar_t* subtitles[] = { fc::T(L"实时温度、转速与趋势"), fc::T(L"外观、硬件来源与控制行为"),
-                                   fc::T(L"温度到风扇转速的映射"), fc::T(L"版本与运行信息") };
+                                   fc::T(L"温度到输出 PWM 的映射"), fc::T(L"版本与运行信息") };
     Text(PageName(static_cast<int>(page_)), D2D1::RectF(cx, top, cx + cw, top + 40), fTitle_, theme_.textPrimary);
     Text(subtitles[static_cast<int>(page_)], D2D1::RectF(cx, top + 40, cx + cw, top + 62), fSmall_, theme_.textSecondary);
 
@@ -1245,11 +1318,14 @@ void App::OnMouseMove(int x, int y) {
     float sx = x / scale_, sy = y / scale_;
     if (!sliderDrag_.empty()) {
         // 拖动只改本地值并重绘，命令在松手时发一次，避免每个像素都写盘
-        sliderValue_ = SliderValueAt(sliderDrag_, static_cast<int>(std::lround(sx)), SliderRowValue(sliderDrag_));
+        // 值没变就不用重画：以前每个 WM_MOUSEMOVE 都整窗重绘，1px 抖动也会卡
+        const double before = SliderRowValue(sliderDrag_);
+        sliderValue_ = SliderValueAt(sliderDrag_, static_cast<int>(std::lround(sx)), before);
         ApplySliderValue(sliderDrag_, sliderValue_, false);
         hover_ = sliderDrag_;
         SetCursor(LoadCursorW(nullptr, IDC_HAND));
-        InvalidateRect(hwnd_, nullptr, FALSE);
+        // 只有量化后的值真的变了才重画：拖动时每像素重绘整窗是高 DPI 下卡顿的主因
+        if (SliderRowValue(sliderDrag_) != before) InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
     std::wstring previous = hover_;
@@ -1266,13 +1342,15 @@ void App::OnMouseMove(int x, int y) {
     SetCursor(LoadCursorW(nullptr, interactive ? IDC_HAND : IDC_ARROW));
 
     if (dragIndex_ >= 0 && page_ == Page::Curve) {
-        std::vector<Point2>& points = curveTab_ == 0 ? curve_ : rpmCurve_;
-        const double xMax = curveTab_ == 0 ? 120.0 : 10000.0;
-        const float t = (sx - curvePlot_.left) / (curvePlot_.right - curvePlot_.left) * static_cast<float>(xMax);
-        const float p = (curvePlot_.bottom - sy) / (curvePlot_.bottom - curvePlot_.top) * 100.0f;
+        std::vector<Point2>& points = CurvePoints(curveActive_);
+        const D2D1_RECT_F plot = CurvePlot(curveActive_);
+        const double xMax = CurveXMax(curveActive_);
+        const float t = (sx - plot.left) / (plot.right - plot.left) * static_cast<float>(xMax);
+        const float p = (plot.bottom - sy) / (plot.bottom - plot.top) * 100.0f;
         points[dragIndex_].t = std::clamp(static_cast<double>(t), 0.0, xMax);
         points[dragIndex_].p = std::clamp(static_cast<double>(p), 0.0, 100.0);
         std::sort(points.begin(), points.end(), [](const Point2& a, const Point2& b) { return a.t < b.t; });
+        curveDragMoved_ = true;
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
@@ -1332,22 +1410,32 @@ void App::OnLButtonDown(int x, int y) {
     }
 
     if (page_ == Page::Curve) {
-        const std::vector<Point2>& points = curveTab_ == 0 ? curve_ : rpmCurve_;
-        const double xMax = curveTab_ == 0 ? 120.0 : 10000.0;
-        for (size_t i = 0; i < points.size(); ++i) {
-            float px = curvePlot_.left + static_cast<float>(points[i].t / xMax) * (curvePlot_.right - curvePlot_.left);
-            float py = curvePlot_.bottom - static_cast<float>(points[i].p / 100.0) * (curvePlot_.bottom - curvePlot_.top);
-            if (std::abs(sx - px) < 12 && std::abs(sy - py) < 12) {
-                dragIndex_ = static_cast<int>(i);
-                curveSelected_ = static_cast<int>(i);
-                InvalidateRect(hwnd_, nullptr, FALSE);
-                return;
+        // 两张图都参与命中：哪张图上的圆点被按住，哪张就是当前编辑的曲线
+        for (int which = 0; which < 2; ++which) {
+            const std::vector<Point2>& points = CurvePoints(which);
+            const D2D1_RECT_F plot = CurvePlot(which);
+            const double xMax = CurveXMax(which);
+            for (size_t i = 0; i < points.size(); ++i) {
+                float px = plot.left + static_cast<float>(points[i].t / xMax) * (plot.right - plot.left);
+                float py = plot.bottom - static_cast<float>(points[i].p / 100.0) * (plot.bottom - plot.top);
+                if (std::abs(sx - px) < 12 && std::abs(sy - py) < 12) {
+                    curveActive_ = which;
+                    dragIndex_ = static_cast<int>(i);
+                    curveSelected_ = static_cast<int>(i);
+                    curveDragMoved_ = false;
+                    RecordCurveUndo();  // 先记下拖动前的样子，没真拖动就在松手时扔掉
+                    InvalidateRect(hwnd_, nullptr, FALSE);
+                    return;
+                }
             }
         }
         // 空白处点一下就在那里加一个点（1.3.0 曲线编辑器的手感）
-        if (sx >= curvePlot_.left && sx <= curvePlot_.right && sy >= curvePlot_.top && sy <= curvePlot_.bottom) {
-            AddCurvePointAt(sx, sy);
-            return;
+        for (int which = 0; which < 2; ++which) {
+            const D2D1_RECT_F plot = CurvePlot(which);
+            if (sx >= plot.left && sx <= plot.right && sy >= plot.top && sy <= plot.bottom) {
+                AddCurvePointAt(which, sx, sy);
+                return;
+            }
         }
     }
     for (auto& h : hits_) {
@@ -1377,42 +1465,39 @@ void App::OnLButtonDown(int x, int y) {
             updateDetail_.clear();
             fc::CheckUpdate();
             InvalidateRect(hwnd_, nullptr, FALSE);
-        } else if (id == L"chip:curve:temp" || id == L"chip:curve:rpm") {
-            curveTab_ = (id == L"chip:curve:rpm") ? 1 : 0;
-            dragIndex_ = -1;
-            InvalidateRect(hwnd_, nullptr, FALSE);
         } else if (id == L"act:reconnect") {
             fc::RequestReconnect();
             toast_.clear();  // 状态由下一帧 state 带回来，这里不假装成功
             InvalidateRect(hwnd_, nullptr, FALSE);
         } else if (id == L"settings:reload") {
             ReloadFromBackend();
-        } else if (id == L"curve:add") {
-            AddCurvePointAt(curvePlot_.left + (curvePlot_.right - curvePlot_.left) * 0.5f,
-                            curvePlot_.top + (curvePlot_.bottom - curvePlot_.top) * 0.5f);
-        } else if (id == L"curve:del") {
-            std::vector<Point2>& points = curveTab_ == 0 ? curve_ : rpmCurve_;
+        } else if (id == L"chip:curve:add") {
+            const D2D1_RECT_F plot = CurvePlot(curveActive_);
+            AddCurvePointAt(curveActive_, (plot.left + plot.right) * 0.5f, (plot.top + plot.bottom) * 0.5f);
+        } else if (id == L"chip:curve:del") {
+            std::vector<Point2>& points = CurvePoints(curveActive_);
             if (curveSelected_ >= 0 && curveSelected_ < static_cast<int>(points.size()) && points.size() > 2) {
+                RecordCurveUndo();
                 points.erase(points.begin() + curveSelected_);
                 curveSelected_ = -1;
-                PushCurveToBackend();
+                PushCurveToBackend(curveActive_);
                 InvalidateRect(hwnd_, nullptr, FALSE);
             }
         } else if (id == L"set:logs" || id == L"chip:logs") {
             ShellExecuteW(nullptr, L"open", L"explorer.exe", L"%APPDATA%\\FanControl\\Logs", nullptr, SW_SHOWNORMAL);
-        } else if (id == L"chip:apply") {
-            PushCurveToBackend();
-            InvalidateRect(hwnd_, nullptr, FALSE);
+        } else if (id == L"chip:curve:undo") {
+            UndoCurve();
         } else if (id == L"chip:release") {
             ShellExecuteW(nullptr, L"open", L"https://github.com/Anlerway/Bluetooth-FanControl/releases",
                           nullptr, nullptr, SW_SHOWNORMAL);
         } else if (id == L"chip:reset") {
-            if (curveTab_ == 0) {
+            RecordCurveUndo();
+            if (curveActive_ == 0) {
                 curve_ = { {30, 20}, {50, 35}, {70, 60}, {90, 100} };
             } else {
                 rpmCurve_ = { {0, 0}, {2000, 25}, {4000, 45}, {6000, 65}, {8000, 85}, {10000, 100} };
             }
-            PushCurveToBackend();
+            PushCurveToBackend(curveActive_);
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
         // 未登记的命中 id 直接忽略：以前这里会弹「命令已发送」把未实现的点击伪装成成功。
@@ -1420,16 +1505,25 @@ void App::OnLButtonDown(int x, int y) {
     }
 }
 
-void App::OnLButtonUp(int, int) {
+void App::OnLButtonUp(int x, int) {
     if (!sliderDrag_.empty()) {
+        // 用松手位置落盘：最后一次 WM_MOUSEMOVE 可能与松手点差几个像素
+        sliderValue_ = SliderValueAt(sliderDrag_, x, sliderValue_);
         ApplySliderValue(sliderDrag_, sliderValue_, true);
         sliderDrag_.clear();
         ReleaseCapture();
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
-    if (dragIndex_ >= 0 && page_ == Page::Curve) PushCurveToBackend();
+    if (dragIndex_ >= 0 && page_ == Page::Curve) {
+        if (curveDragMoved_) {
+            PushCurveToBackend(curveActive_);  // 松手才落盘：拖动过程中不写盘
+        } else if (!curveUndo_.empty()) {
+            curveUndo_.pop_back();  // 只是点中一个点、没有拖动，这一步不算改动
+        }
+    }
     dragIndex_ = -1;
+    curveDragMoved_ = false;
 }
 
 void App::OnMouseWheel(int delta) {
@@ -1586,12 +1680,12 @@ void App::ApplyState(const fc::State& state) {
     }
 }
 
-void App::PushCurveToBackend() {
-    const std::vector<Point2>& source = curveTab_ == 0 ? curve_ : rpmCurve_;
+void App::PushCurveToBackend(int which) {
+    const std::vector<Point2>& source = CurvePoints(which);
     std::vector<fc::CurvePoint> points;
     points.reserve(source.size());
     for (const auto& point : source) points.push_back(fc::CurvePoint{ point.t, point.p });
-    fc::SetCurve(points, curveTab_ != 0);
+    fc::SetCurve(points, which != 0);
 }
 
 void App::SendString(const char* key, const std::wstring& value) {
@@ -1728,24 +1822,27 @@ void App::HandleSettingClick(const std::wstring& id, D2D1_RECT_F rect, int click
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
-void App::AddCurvePointAt(float sx, float sy) {
-    if (curvePlot_.right <= curvePlot_.left || curvePlot_.bottom <= curvePlot_.top) return;
-    std::vector<Point2>& points = curveTab_ == 0 ? curve_ : rpmCurve_;
-    const double xMax = curveTab_ == 0 ? 120.0 : 10000.0;
-    const double t = std::clamp(static_cast<double>((sx - curvePlot_.left) / (curvePlot_.right - curvePlot_.left)) * xMax,
-                                0.0, xMax);
+void App::AddCurvePointAt(int which, float sx, float sy) {
+    const D2D1_RECT_F plot = CurvePlot(which);
+    if (plot.right <= plot.left || plot.bottom <= plot.top) return;
+    curveActive_ = which;
+    std::vector<Point2>& points = CurvePoints(which);
+    const double xMax = CurveXMax(which);
+    const double t =
+        std::clamp(static_cast<double>((sx - plot.left) / (plot.right - plot.left)) * xMax, 0.0, xMax);
     const double p =
-        std::clamp(static_cast<double>((curvePlot_.bottom - sy) / (curvePlot_.bottom - curvePlot_.top)) * 100.0, 0.0, 100.0);
+        std::clamp(static_cast<double>((plot.bottom - sy) / (plot.bottom - plot.top)) * 100.0, 0.0, 100.0);
     for (const auto& point : points) {  // 太近就不再加点，避免两个圆重叠后拖不清
         if (std::abs(point.t - t) < xMax / 100.0) return;
     }
+    RecordCurveUndo();
     points.push_back(Point2{ t, p });
     std::sort(points.begin(), points.end(), [](const Point2& a, const Point2& b) { return a.t < b.t; });
     curveSelected_ = -1;
     for (size_t i = 0; i < points.size(); ++i) {
         if (std::abs(points[i].t - t) < 1e-9) curveSelected_ = static_cast<int>(i);
     }
-    PushCurveToBackend();
+    PushCurveToBackend(which);
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 

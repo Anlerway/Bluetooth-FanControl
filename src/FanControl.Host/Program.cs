@@ -23,6 +23,11 @@ internal static class Program
     // --page=N 让界面第一次打开时停在指定页：截图脚本与自动化测试用，日常启动不带这个参数。
     private static int _initialPage = -1;
 
+    // 退出路径上出的异常不该冒充「启动失败」弹框：进程已经在收尾，弹出来只会挡住用户
+    private static volatile bool _shuttingDown;
+    // 退出阶段 DI 容器已经拆了，只能用提前留好的 logger 把异常写进日志
+    private static Microsoft.Extensions.Logging.ILogger? _logger;
+
     [STAThread]
     private static int Main(string[] args)
     {
@@ -60,6 +65,20 @@ internal static class Program
         catch (Exception ex)
         {
             Trace.WriteLine(ex);
+            if (_shuttingDown)
+            {
+                // 退出时才炸的（大多是释放阶段的对象已释放）：只记日志，不弹框
+                try
+                {
+                    _logger?.LogWarning(ex, "退出时出错。");
+                }
+                catch (Exception)
+                {
+                }
+
+                return 1;
+            }
+
             MessageBoxW(IntPtr.Zero, "FanControl 启动失败：" + ex.Message, "FanControl", 0x00000010);
             return 1;
         }
@@ -90,6 +109,7 @@ internal static class Program
 
         var runtime = provider.GetRequiredService<FanControlRuntime>();
         var logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("FanControl.Host");
+        _logger = logger;
 
         using var shutdown = new CancellationTokenSource();
         using var tray = new TrayHost();
@@ -138,6 +158,48 @@ internal static class Program
 
         router.Start();
 
+        // 诊断用：FANCONTROL_MEMLOG=1 每 30 秒记一次托管堆/私有内存/工作集，用来区分托管还是原生泄漏。
+        if (Environment.GetEnvironmentVariable("FANCONTROL_MEMLOG") == "1")
+        {
+            _ = Task.Run(async () =>
+            {
+                while (true)
+                {
+                    await Task.Delay(TimeSpan.FromSeconds(10)).ConfigureAwait(false);
+                    try
+                    {
+                        using var self = System.Diagnostics.Process.GetCurrentProcess();
+                        System.IO.File.AppendAllText(
+                            System.IO.Path.Combine(System.IO.Path.GetTempPath(), "fc-mem.log"),
+                            string.Format(
+                                System.Globalization.CultureInfo.InvariantCulture,
+                                "managed={0:F1} heap={1:F1} priv={2:F1} ws={3:F1} alloc={4:F1} gc={5}/{6}/{7} threads={8}\n",
+                                GC.GetTotalMemory(false) / 1048576.0,
+                                GC.GetGCMemoryInfo().HeapSizeBytes / 1048576.0,
+                                self.PrivateMemorySize64 / 1048576.0,
+                                self.WorkingSet64 / 1048576.0,
+                                GC.GetTotalAllocatedBytes() / 1048576.0,
+                                GC.CollectionCount(0), GC.CollectionCount(1), GC.CollectionCount(2),
+                                self.Threads.Count));
+                    }
+                    catch (Exception)
+                    {
+                    }
+                }
+            });
+        }
+
+        // 自动化测试用：FANCONTROL_EXIT_AFTER=秒 走一遍与托盘「退出」完全相同的收尾路径。
+        var exitAfter = Environment.GetEnvironmentVariable("FANCONTROL_EXIT_AFTER");
+        if (int.TryParse(exitAfter, out var exitSeconds) && exitSeconds > 0)
+        {
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(exitSeconds)).ConfigureAwait(false);
+                shutdown.Cancel();
+            });
+        }
+
         // --autostart 是计划任务用的：只留托盘，不弹窗口。
         var autostart = args.Any(argument => string.Equals(argument, "--autostart", StringComparison.OrdinalIgnoreCase));
         if (!autostart)
@@ -168,6 +230,8 @@ internal static class Program
         catch (OperationCanceledException)
         {
         }
+
+        _shuttingDown = true;
 
         try
         {
@@ -205,6 +269,16 @@ internal static class Program
         if (UiBridge.EnsureStarted())
         {
             UiBridge.Activate();
+
+            // 界面刚起来的十几秒里，DWrite/D2D 与采样栈会把托管堆顶到十几 MB 才触发第一次回收，
+            // 任务管理器里看到的私有内存就一路往上爬。等界面热起来整一次代 2 回收，
+            // 垃圾当场还给系统，后面每次只回收新垃圾，数字就稳住不动了。
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(TimeSpan.FromSeconds(15)).ConfigureAwait(false);
+                // Optimized 会把这次回收当成「可能不划算」直接跳过，这里要的是必做
+                GC.Collect(GC.MaxGeneration, GCCollectionMode.Forced, blocking: true, compacting: true);
+            });
         }
     }
 

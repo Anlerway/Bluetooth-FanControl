@@ -110,8 +110,21 @@ internal sealed class UiBridge
             return;
         }
 
-        FcUiQuit();
-        thread.Join(TimeSpan.FromSeconds(3));
+        try
+        {
+            FcUiQuit();
+            thread.Join(TimeSpan.FromSeconds(3));
+        }
+        finally
+        {
+            lock (Gate)
+            {
+                if (ReferenceEquals(_thread, thread))
+                {
+                    _thread = null;
+                }
+            }
+        }
     }
 
     private static void RunUiThread()

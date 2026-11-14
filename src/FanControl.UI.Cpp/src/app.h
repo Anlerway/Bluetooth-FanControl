@@ -92,6 +92,8 @@ private:
     void Text(const std::wstring& s, D2D1_RECT_F r, IDWriteTextFormat* fmt, D2D1_COLOR_F c);
     void TextCentered(const std::wstring& s, D2D1_RECT_F r, IDWriteTextFormat* fmt, D2D1_COLOR_F c);
     void TextRight(const std::wstring& s, D2D1_RECT_F r, IDWriteTextFormat* fmt, D2D1_COLOR_F c);
+    // 单行文字垂直居中：下拉框的值与浮层条目用它，Text() 是顶对齐，30px 高的框里看着偏上
+    void TextMiddle(const std::wstring& s, D2D1_RECT_F r, IDWriteTextFormat* fmt, D2D1_COLOR_F c);
     void Glyph(const std::wstring& s, D2D1_RECT_F r, float size, D2D1_COLOR_F c);
     void Line(float x1, float y1, float x2, float y2, D2D1_COLOR_F c, float width = 1.0f);
     void AddHit(D2D1_RECT_F r, const std::wstring& id);
@@ -105,6 +107,17 @@ private:
     void DrawDashboard(float x, float y, float w);
     void DrawSettings(float x, float y, float w);
     void DrawCurve(float x, float y, float w);
+    // 曲线页的两张映射图：which 0=温度曲线 1=转速曲线，并排平铺（不再用页签切换）
+    void DrawCurvePanel(float x, float y, float w, float h, int which, const std::wstring& title,
+                        const std::wstring& axisLabel, double xMax);
+    void DrawPwmChart(float x, float y, float w);
+    std::vector<Point2>& CurvePoints(int which);
+    const std::vector<Point2>& CurvePoints(int which) const;
+    D2D1_RECT_F CurvePlot(int which) const;
+    static double CurveXMax(int which) { return which == 0 ? 120.0 : 10000.0; }
+    struct CurveUndo { std::vector<Point2> temp; std::vector<Point2> rpm; };
+    void RecordCurveUndo();
+    void UndoCurve();
     void DrawAbout(float x, float y, float w);
 
     // 行内下拉（1.3.0 里这些字段都是 ComboBox）：点行 → 在行下方浮出列表，不再弹模态窗。
@@ -205,9 +218,13 @@ private:
 
     std::vector<Point2> curve_;
     std::vector<Point2> rpmCurve_;
-    int curveTab_ = 0;  // 0=温度曲线 1=转速曲线
+    int curveActive_ = 0;  // 当前编辑哪条曲线：0=温度曲线 1=转速曲线（点哪张图就是哪条）
     D2D1_RECT_F curvePlot_{};
+    D2D1_RECT_F rpmPlot_{};
     int dragIndex_ = -1;
+    bool curveDragMoved_ = false;
+    // 曲线改动即写盘，没有「保存」按钮；撤回栈存整份快照（两张图一起回退），最多 32 步
+    std::deque<CurveUndo> curveUndo_;
     int smoothMs_ = 800;
     bool autostart_ = false;
     bool notify_ = true;
@@ -245,7 +262,7 @@ private:
     void SendValue(const char* key, const char* valueJson);
     void ApplyConfig(const fc::Config& config);
     void ApplyState(const fc::State& state);
-    void PushCurveToBackend();
+    void PushCurveToBackend(int which);
     std::wstring ThemeLabel() const;
     std::wstring UnitLabel() const;
     std::wstring LangLabel() const;
@@ -259,7 +276,7 @@ private:
     // 设置行点击分发：下拉行开浮层、滑块按位置取值、开关取反（1.3.0 的设置项都走这里）
     void HandleSettingClick(const std::wstring& id, D2D1_RECT_F rect, int clickX);
     // 曲线页：在 plot 内某点插入一个控制点（空白处点击 / 「添加点」）
-    void AddCurvePointAt(float sx, float sy);
+    void AddCurvePointAt(int which, float sx, float sy);
     void SendString(const char* key, const std::wstring& value);
     void SendAutostart(bool enabled);
 
