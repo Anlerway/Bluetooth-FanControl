@@ -28,6 +28,7 @@ FanControl.exe (requireAdministrator, 常驻)
 - 单实例：互斥体 `Local\FanControl`。第二次启动只 `Set` 事件 `Local\FanControl.ShowWindow` 后退出，由已在运行的实例把窗口唤到前台。
 - 窗口不等于进程：关掉窗口只是销毁窗口、退出界面线程，托盘与采样照常；托盘菜单「打开主界面」会重新 `FcUiRun()` 建出窗口。
 - `--autostart`（计划任务用）只留托盘、不弹窗口；普通启动（安装器、快捷方式、开始菜单）直接显示窗口。
+- `--page=N`（0 仪表盘 / 1 设置 / 2 曲线 / 3 关于）只决定界面**第一次**建窗口时停在哪一页，截图脚本与自动化用它；用户之后在窗口里切换不受影响。
 - 开机自启：计划任务 `FanControl`，动作 <安装目录>\FanControl.exe --autostart；`AutostartManager` 负责创建/删除与查询。
 - 没有命名管道、没有启动器、没有 Job Object：进程组的需求随单一进程一起消失。
 

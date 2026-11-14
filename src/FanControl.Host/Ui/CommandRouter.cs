@@ -32,6 +32,11 @@ internal sealed class CommandRouter : IAsyncDisposable
     private readonly ILogger _logger;
     private readonly CancellationTokenSource _cts = new();
 
+    // 界面一条动作可能拆成几条命令（例如选蓝牙设备 = set mac + set name），
+    // 它们各自读 CurrentConfig 再写盘，并发执行时后落盘的那条会把前一条的改动覆盖掉。
+    // 命令本身都是毫秒级，串行化比给每条命令补版本号简单得多。
+    private readonly SemaphoreSlim _commandLock = new(1, 1);
+
     // 复用同一个 HttpClient：每次 new 会各带一套连接池与定时器，是长期进程的隐形泄漏
     private static readonly HttpClient Http = CreateHttpClient();
 
@@ -98,7 +103,21 @@ internal sealed class CommandRouter : IAsyncDisposable
         return index > 0 ? json[..index] : json;
     }
 
+    /// <summary>串行化入口：命令按到达顺序一条条落地，避免并发写盘互相覆盖。</summary>
     public async Task HandleAsync(string json)
+    {
+        await _commandLock.WaitAsync().ConfigureAwait(false);
+        try
+        {
+            await HandleCoreAsync(json).ConfigureAwait(false);
+        }
+        finally
+        {
+            _commandLock.Release();
+        }
+    }
+
+    private async Task HandleCoreAsync(string json)
     {
         JsonDocument document;
         try
@@ -423,5 +442,6 @@ internal sealed class CommandRouter : IAsyncDisposable
         }
 
         _cts.Dispose();
+        _commandLock.Dispose();
     }
 }

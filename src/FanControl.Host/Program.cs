@@ -20,6 +20,9 @@ internal static class Program
     private const string MutexName = @"Local\FanControl";
     private const string ShowWindowEventName = @"Local\FanControl.ShowWindow";
 
+    // --page=N 让界面第一次打开时停在指定页：截图脚本与自动化测试用，日常启动不带这个参数。
+    private static int _initialPage = -1;
+
     [STAThread]
     private static int Main(string[] args)
     {
@@ -64,6 +67,16 @@ internal static class Program
 
     private static async Task<int> RunAsync(string[] args, EventWaitHandle showEvent)
     {
+        foreach (var argument in args)
+        {
+            if (argument.StartsWith("--page=", StringComparison.OrdinalIgnoreCase)
+                && int.TryParse(argument.AsSpan(7), out var page)
+                && page is >= 0 and <= 3)
+            {
+                _initialPage = page;
+            }
+        }
+
         // 日志目录取决于 system.json，所以先用一个最小 ConfigManager 把它读出来，
         // 再按它的结果装配完整的服务容器（与 1.3.0 的启动顺序一致）。
         var earlyConfigManager = new ConfigManager(NullLogger<ConfigManager>.Instance);
@@ -180,6 +193,13 @@ internal static class Program
         {
             MessageBoxW(IntPtr.Zero, "找不到 FanControl.UI.dll，请重新安装。", "FanControl", 0x00000010);
             return;
+        }
+
+        // 初始页只在第一次建窗口时生效，之后由用户在窗口里切换。
+        if (_initialPage >= 0)
+        {
+            UiBridge.SetInitialPage(_initialPage);
+            _initialPage = -1;
         }
 
         if (UiBridge.EnsureStarted())

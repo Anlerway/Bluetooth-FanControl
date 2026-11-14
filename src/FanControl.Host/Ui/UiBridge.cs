@@ -65,6 +65,9 @@ internal sealed class UiBridge
         }
     }
 
+    /// <summary>界面首次创建时停在哪一页（0 仪表盘 / 1 设置 / 2 曲线 / 3 关于），截图脚本用。</summary>
+    public static void SetInitialPage(int page) => FcUiSetInitialPage(page);
+
     /// <summary>把已经存在的窗口叫到前台。</summary>
     public static void Activate()
     {
@@ -157,6 +160,9 @@ internal sealed class UiBridge
 
     [DllImport(DllName, CallingConvention = CallingConvention.StdCall)]
     private static extern void FcUiQuit();
+
+    [DllImport(DllName, CallingConvention = CallingConvention.StdCall)]
+    private static extern void FcUiSetInitialPage(int page);
 
     [DllImport(DllName, CallingConvention = CallingConvention.StdCall)]
     private static extern void FcUiSetCommandSink(CommandSink sink);

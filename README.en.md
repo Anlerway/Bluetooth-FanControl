@@ -26,9 +26,13 @@
 | --- | --- |
 | ![Settings](screenshots/en3.png) | ![About](screenshots/en4.png) |
 
+| Bluetooth device picker |
+| --- |
+| ![Bluetooth device picker](screenshots/ble-dialog-en.png) |
+
 > The UI ships in Simplified Chinese and English. Switch it in **Settings → Language**; the choice is stored in `AppConfig.Language` and applied on the next start too. The screenshots above are the English UI.
 >
-> Settings are grouped into five cards — Temperature & RPM, Fan control, Connection, System, Appearance & notifications. Serial and Bluetooth rows only show the set that matches the current link type.
+> Settings are grouped into five cards — Temperature & RPM, Fan control, Connection, System, Appearance & notifications. Pickers are inline drop-downs, except **Bluetooth device**, which opens a centred panel so the name and MAC address fit on one row. Serial and Bluetooth rows only show the set that matches the current link type.
 
 ## Overview
 
@@ -70,7 +74,7 @@ A full remake built on top of the 垃圾研究社 open-source hardware:
 
 #### BLE (Low Energy Bluetooth) Mode (Recommended)
 1. After the ESP32 device is powered on, it will broadcast a Bluetooth signal named `LAPTOP-FAN`. Pair it using your computer's Bluetooth settings.
-2. Open the host software, set the communication method to **BLE**, and select `LAPTOP_FAN` from the device list—no other configuration is required.
+2. Open the host software, set the communication method to **BLE**, click **Bluetooth device** to open the picker (it scans paired devices as soon as it opens) and pick `LAPTOP-FAN`—no other configuration is required.
 3. Wait a moment; the connection should succeed, and the ESP32's OLED screen will start showing data.
 
 #### Serial (COM) Mode (Fallback)

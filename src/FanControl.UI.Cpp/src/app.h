@@ -71,6 +71,8 @@ public:
     void SetInitialTheme(bool dark);
     void SetInitialPage(int index);
     void OnIpcMessage(void* payload);   // 接管 fc::Message* 的所有权
+    // Esc / 关闭动作：先收弹窗、再收下拉，返回是否真的收掉了东西
+    bool DismissOverlay();
     bool IsDark() const { return dark_; }
     float DpiScale() const { return scale_; }
 
@@ -114,6 +116,13 @@ private:
     void FillComboItems(const std::wstring& id);
     // 下拉当前选中项的文字（用于在浮层里打勾）：直接从 config_ 推，避免另存一份状态。
     std::wstring CurrentComboLabel(const std::wstring& id) const;
+
+    // 蓝牙设备选择：1.3.0 是独立窗口，这里在同一个 HWND 里画模态面板（遮罩 + 居中列表），
+    // 免得为了一个列表再养一个窗口类和一套消息循环。
+    void OpenBleDialog();
+    void CloseBleDialog();
+    void DrawBleDialog(float w, float h);
+    void ChooseBleDevice(int index);  // -1 = 清除当前选择
 
     // widgets
     float Card(float x, float y, float w, const std::wstring& title, float height);
@@ -208,6 +217,11 @@ private:
     std::vector<ComboItem> comboItems_;
     bool comboBusy_ = false;
     D2D1_RECT_F comboAnchor_{};
+    // 蓝牙设备弹窗状态（列表内容来自宿主的 scanBle 结果）
+    bool bleDialogOpen_ = false;
+    bool bleDialogBusy_ = false;
+    int bleDialogScroll_ = 0;
+    std::vector<fc::DialogItem> bleDialogItems_;
     // 曲线页当前选中的点（删除点用），-1 = 没有
     int curveSelected_ = -1;
     // SystemConfig 侧状态

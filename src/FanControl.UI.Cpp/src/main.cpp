@@ -119,6 +119,10 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         g_app.OnMouseWheel(GET_WHEEL_DELTA_WPARAM(wp));
         InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
+    case WM_KEYDOWN:
+        // Esc 先收弹窗再收下拉（1.3.0 的对话框也是 Esc 取消）
+        if (wp == VK_ESCAPE && g_app.DismissOverlay()) return 0;
+        break;
     case WM_APP + 1:
         g_app.OnIpcMessage(reinterpret_cast<void*>(lp));
         return 0;

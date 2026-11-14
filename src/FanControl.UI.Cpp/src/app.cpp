@@ -670,7 +670,8 @@ void App::DrawSettings(float x, float y, float w) {
                  std::to_wstring(config_.comBaudRate));
         ry += rowH;
     } else {
-        RowCombo(x, ry, w, rowH, L"set:bledev", fc::T(L"蓝牙设备"), fc::T(L"已配对的 NUS 风扇"), DeviceLabel());
+        // 蓝牙设备要看到一屏候选（名字 + MAC）才选得准，行内下拉放不下，改成点行弹窗
+        RowButton(x, ry, w, rowH, L"set:bledev", fc::T(L"蓝牙设备"), fc::T(L"已配对的 NUS 风扇"), DeviceLabel());
         ry += rowH;
         RowSlider(x, ry, w, rowH, L"set:blepoll", fc::T(L"BLE 轮询"), fc::T(L"发送温度命令的间隔"),
                   config_.blePollIntervalSeconds, 1, 30, Fmt(L"%d s", config_.blePollIntervalSeconds));
@@ -923,9 +924,6 @@ void App::FillComboItems(const std::wstring& id) {
     } else if (id == L"set:comport") {
         comboBusy_ = true;
         fc::ListPorts();
-    } else if (id == L"set:bledev") {
-        comboBusy_ = true;
-        fc::ScanBleDevices();
     }
 }
 
@@ -944,6 +942,132 @@ void App::CloseCombo() {
     comboItems_.clear();
     comboBusy_ = false;
     InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+bool App::DismissOverlay() {
+    if (bleDialogOpen_) {
+        CloseBleDialog();
+        return true;
+    }
+    if (!comboOpen_.empty()) {
+        CloseCombo();
+        return true;
+    }
+    return false;
+}
+
+// ---------------- 蓝牙设备弹窗 ----------------
+
+void App::OpenBleDialog() {
+    CloseCombo();  // 两个浮层同时开着，点击分发会打架
+    bleDialogOpen_ = true;
+    bleDialogScroll_ = 0;
+    bleDialogItems_.clear();
+    bleDialogBusy_ = true;
+    // 每次打开都重新扫：风扇可能刚开机，上次的结果早就过期了
+    fc::ScanBleDevices();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+void App::CloseBleDialog() {
+    if (!bleDialogOpen_) return;
+    bleDialogOpen_ = false;
+    bleDialogBusy_ = false;
+    bleDialogItems_.clear();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+void App::ChooseBleDevice(int index) {
+    if (index < 0) {
+        // 「未选择设备」：清掉 MAC 与名字，后台回到按名字搜索的老路
+        config_.bleDeviceMac.clear();
+        config_.bleDeviceName.clear();
+        SendString("bleDeviceMac", L"");
+        SendString("bleDeviceName", L"");
+    } else {
+        if (index >= static_cast<int>(bleDialogItems_.size())) return;
+        const fc::DialogItem& item = bleDialogItems_[index];
+        config_.bleDeviceMac = item.value;
+        // label 与 value 相同说明后台只有 MAC，没有广播名
+        config_.bleDeviceName = item.label == item.value ? std::wstring() : item.label;
+        SendString("bleDeviceMac", item.value);
+        SendString("bleDeviceName", config_.bleDeviceName);
+    }
+    CloseBleDialog();
+}
+
+void App::DrawBleDialog(float w, float h) {
+    if (!bleDialogOpen_) return;
+    // 模态遮罩：设置页退到后面，点遮罩等于取消
+    FillRect(D2D1::RectF(0, 0, w, h), Col(0x000000, 0.45f));
+    const int count = static_cast<int>(bleDialogItems_.size());
+    const int rows = count + 1;  // 首行固定是「未选择设备」，用来清掉当前选择
+    const int visible = std::min(rows, 7);
+    const float rowH = 48.0f;
+    const float panelW = std::min(560.0f, w - 96.0f);
+    const float panelH = 64.0f + visible * rowH + 64.0f;
+    const float left = (w - panelW) * 0.5f;
+    const float top = (h - panelH) * 0.5f;
+    const float listTop = top + 64.0f;
+    D2D1_RECT_F panel = D2D1::RectF(left, top, left + panelW, top + panelH);
+    FillRound(panel, 8.0f, theme_.cardBg);
+    StrokeRound(panel, 8.0f, theme_.cardBorder);
+    Text(fc::T(L"选择蓝牙设备"), D2D1::RectF(left + 20, top + 14, left + panelW - 20, top + 38), fH2_,
+         theme_.textPrimary);
+    Text(fc::T(L"风扇需开机并处于配对模式"), D2D1::RectF(left + 20, top + 38, left + panelW - 20, top + 56), fSmall_,
+         theme_.textSecondary);
+
+    const int first = std::clamp(bleDialogScroll_, 0, std::max(0, rows - visible));
+    rt_->PushAxisAlignedClip(D2D1::RectF(left + 8, listTop, left + panelW - 8, listTop + visible * rowH),
+                             D2D1_ANTIALIAS_MODE_ALIASED);
+    for (int i = 0; i < visible; ++i) {
+        const int index = first + i;
+        if (index >= rows) break;
+        const bool clear = index == 0;
+        D2D1_RECT_F r = D2D1::RectF(left + 8, listTop + i * rowH, left + panelW - 8, listTop + (i + 1) * rowH);
+        const std::wstring id = L"bledlg:" + std::to_wstring(clear ? -1 : index - 1);
+        if (Hovered(id)) FillRound(r, 4.0f, theme_.controlHover);
+        std::wstring title = clear ? fc::T(L"未选择设备") : bleDialogItems_[index - 1].label;
+        std::wstring subtitle;
+        bool selected = clear ? config_.bleDeviceMac.empty() : false;
+        if (!clear) {
+            const fc::DialogItem& item = bleDialogItems_[index - 1];
+            if (item.label != item.value) subtitle = item.value;  // 有名字时第二行显示 MAC
+            selected = !config_.bleDeviceMac.empty() && item.value == config_.bleDeviceMac;
+        }
+        Text(title, D2D1::RectF(r.left + 12, r.top + 6, r.right - 40, r.top + 26), fBody_,
+             selected ? theme_.accent : theme_.textPrimary);
+        if (!subtitle.empty())
+            Text(subtitle, D2D1::RectF(r.left + 12, r.top + 24, r.right - 40, r.top + 43), fSmall_,
+                 theme_.textSecondary);
+        if (selected)
+            Glyph(L"\xE73E", D2D1::RectF(r.right - 32, r.top + 14, r.right - 10, r.top + 34), 14.0f, theme_.accent);
+        AddHit(r, id);
+    }
+    rt_->PopAxisAlignedClip();
+    if (rows > visible) {
+        // 只画位置提示，不做拖动条：候选最多十几个，滚轮够用
+        const float trackX = left + panelW - 18.0f;
+        const float trackTop = listTop + 4.0f;
+        const float trackH = visible * rowH - 8.0f;
+        FillRound(D2D1::RectF(trackX, trackTop, trackX + 4.0f, trackTop + trackH), 2.0f, theme_.controlBorder);
+        const float barH = std::max(24.0f, trackH * visible / rows);
+        const float t0 = static_cast<float>(first) / static_cast<float>(rows - visible);
+        FillRound(D2D1::RectF(trackX, trackTop + (trackH - barH) * t0, trackX + 4.0f,
+                              trackTop + (trackH - barH) * t0 + barH),
+                  2.0f, theme_.textTertiary);
+    }
+
+    const float by = top + panelH - 52.0f;
+    if (bleDialogBusy_) {
+        Text(fc::T(L"扫描中…"), D2D1::RectF(left + 140, by + 6, left + panelW - 120, by + 30), fSmall_,
+             theme_.textSecondary);
+    } else if (count == 0) {
+        Text(fc::T(L"没有扫描到设备"), D2D1::RectF(left + 140, by + 6, left + panelW - 120, by + 30), fSmall_,
+             theme_.textSecondary);
+    }
+    Chip(left + 20, by, 96.0f, 32.0f, fc::T(L"重新扫描"), false, L"bledlg:scan");
+    Chip(left + panelW - 104.0f, by, 84.0f, 32.0f, fc::T(L"关闭"), false, L"bledlg:close");
 }
 
 void App::ChooseComboItem(int index) {
@@ -994,13 +1118,6 @@ void App::ChooseComboItem(int index) {
     } else if (id == L"set:comport") {
         config_.comPort = value;
         SendString("comPort", value);
-    } else if (id == L"set:bledev") {
-        // value 是 MAC，label 是设备名（后台给同名项时 label == value）
-        config_.bleDeviceMac = value;
-        config_.bleDeviceName = comboItems_.size() > static_cast<size_t>(index) ? comboItems_[index].label : std::wstring();
-        if (config_.bleDeviceName == value) config_.bleDeviceName.clear();
-        SendString("bleDeviceMac", value);
-        SendString("bleDeviceName", config_.bleDeviceName);
     }
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
@@ -1080,6 +1197,7 @@ void App::Paint() {
 
     // 下拉浮层画在内容之上（不裁剪），点击外部由 OnLButtonDown 关掉
     DrawCombo(size.width, size.height);
+    DrawBleDialog(size.width, size.height);
 
     if (!toast_.empty() && GetTickCount() < toastUntil_) {
         float tw = 240.0f;
@@ -1138,6 +1256,8 @@ void App::OnMouseMove(int x, int y) {
     hover_.clear();
     for (auto& h : hits_) {
         if (sx >= h.rect.left && sx <= h.rect.right && sy >= h.rect.top && sy <= h.rect.bottom) {
+            // 弹窗打开时只认弹窗里的控件，否则遮罩后面的行会跟着亮
+            if (bleDialogOpen_ && h.id.rfind(L"bledlg:", 0) != 0 && h.id.rfind(L"chip:bledlg:", 0) != 0) continue;
             hover_ = h.id;
             break;
         }
@@ -1166,6 +1286,28 @@ void App::OnMouseLeave() {
 
 void App::OnLButtonDown(int x, int y) {
     float sx = x / scale_, sy = y / scale_;
+
+    // 蓝牙弹窗是模态的：命中只认弹窗自己的控件，点遮罩或别的任何地方都当取消
+    if (bleDialogOpen_) {
+        for (auto it = hits_.rbegin(); it != hits_.rend(); ++it) {
+            const D2D1_RECT_F& r = it->rect;
+            if (sx < r.left || sx > r.right || sy < r.top || sy > r.bottom) continue;
+            if (it->id.rfind(L"bledlg:", 0) == 0) {
+                ChooseBleDevice(_wtoi(it->id.c_str() + 7));
+            } else if (it->id == L"chip:bledlg:scan") {
+                bleDialogBusy_ = true;
+                bleDialogItems_.clear();
+                bleDialogScroll_ = 0;
+                fc::ScanBleDevices();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            } else {
+                CloseBleDialog();
+            }
+            return;
+        }
+        CloseBleDialog();
+        return;
+    }
 
     // 下拉打开时：点条目就选中，点别处就收起（和系统 ComboBox 一样）
     if (!comboOpen_.empty()) {
@@ -1291,6 +1433,13 @@ void App::OnLButtonUp(int, int) {
 }
 
 void App::OnMouseWheel(int delta) {
+    if (bleDialogOpen_) {
+        const int rows = static_cast<int>(bleDialogItems_.size()) + 1;
+        bleDialogScroll_ =
+            std::clamp(bleDialogScroll_ - static_cast<int>(delta / 120), 0, std::max(0, rows - 7));
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
     if (!comboOpen_.empty()) {  // 下拉浮层不随页面滚动，滚轮只在列表内部翻页
         const int count = static_cast<int>(comboItems_.size());
         comboScroll_ = std::clamp(comboScroll_ - static_cast<int>(delta / 120), 0, std::max(0, count - 8));
@@ -1335,6 +1484,12 @@ void App::OnIpcMessage(void* payload) {
         // 后台只给 code + 参数，文案由界面按当前语言拼
         toast_ = fc::ErrorText(message->errorCode, message->errorArg1, message->errorArg2, message->error);
         toastUntil_ = GetTickCount() + 4000;
+    }
+    if (message->event == L"bleDevices" && bleDialogOpen_) {
+        // 弹窗自己收一份：切页/收起下拉都不该把候选清掉
+        bleDialogItems_ = message->items;
+        bleDialogBusy_ = false;
+        bleDialogScroll_ = 0;
     }
     if (message->hasItems) {
         // GPU 列表是异步回来的：保留第一项「自动」，再把后台枚举到的卡接上
@@ -1533,10 +1688,13 @@ void App::ReloadFromBackend() {
 
 void App::HandleSettingClick(const std::wstring& id, D2D1_RECT_F rect, int clickX) {
     // 下拉行：把行矩形记成浮层锚点，列表内容由 FillComboItems 准备
+    if (id == L"set:bledev") {
+        OpenBleDialog();
+        return;
+    }
     static const wchar_t* kComboRows[] = { L"set:tempsrc", L"set:gpusrc",  L"set:gpusel", L"set:fansrc",
                                            L"set:mode",    L"set:comm",    L"set:comport", L"set:baud",
-                                           L"set:bledev",  L"set:theme",   L"set:lang",    L"set:unit",
-                                           L"set:datadir" };
+                                           L"set:theme",   L"set:lang",    L"set:unit",    L"set:datadir" };
     for (const wchar_t* row : kComboRows) {
         if (id == row) {
             comboAnchor_ = rect;
