@@ -83,7 +83,8 @@ Two processes plus one launcher:
 
 - **`FanControl.exe`** (C++, administrator manifest) is the single entry point: it starts the daemon if needed and asks it to show the UI — one UAC prompt in total;
 - **`FanControl.Host.exe`** (C#, administrator) runs resident and owns the sampling loop, PWM computation, BLE/COM communication, config persistence and the tray icon;
-- **`FanControl.UI.exe`** (C++20 + Direct2D/DirectWrite, standard user) is started on demand and talks to the daemon over the `FanControl.Host.v1` named pipe; closing the UI leaves fan control running.
+- **`FanControl.UI.exe`** (C++20 + Direct2D/DirectWrite, standard user) is started on demand and talks to the daemon over the `FanControl.Host.v1` named pipe; closing the UI leaves fan control running;
+- Both run in one named job object (`Local\FanControl.Group`): if the daemon exits, crashes or is killed, the UI goes with it instead of lingering as an orphan window.
 
 ```text
 FanControl.slnx

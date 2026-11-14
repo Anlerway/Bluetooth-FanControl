@@ -85,7 +85,8 @@
 
 - **启动器 `FanControl.exe`**（C++，带管理员清单）是唯一用户入口：后台没跑就拉起后台，再唤出界面，整套只弹一次 UAC；
 - **后台 `FanControl.Host.exe`**（C#，需管理员）常驻运行，独占采样循环、PWM 计算、BLE/COM 通信、配置落盘与托盘图标；
-- **界面 `FanControl.UI.exe`**（C++20 + Direct2D/DirectWrite，普通权限）按需启动，通过命名管道 `FanControl.Host.v1` 读状态、下发配置；关掉界面风扇照常受控。
+- **界面 `FanControl.UI.exe`**（C++20 + Direct2D/DirectWrite，普通权限）按需启动，通过命名管道 `FanControl.Host.v1` 读状态、下发配置；关掉界面风扇照常受控；
+- 后台与界面在同一个命名进程组（Job Object `Local\FanControl.Group`）：后台退出、崩溃或被结束，界面随组一起关闭，不会留下孤儿窗口。
 
 ```text
 FanControl.slnx

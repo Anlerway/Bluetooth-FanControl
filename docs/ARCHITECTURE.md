@@ -34,7 +34,10 @@ FanControl.Host.exe (管理员, 常驻)          FanControl.UI.exe (普通权限
 - 用户入口是启动器 `FanControl.exe`（`src/FanControl.UI.Cpp/src/launcher.cpp`，DLL 清单带 `requireAdministrator`）：后台没跑就 `CreateProcessW` 拉起，再打开事件 `Local\FanControl.ShowWindow` 让后台唤出界面，整套只弹一次 UAC。`--autostart` 模式只启动后台（给计划任务用）。
 - 界面找不到后台时，按自身目录优先 `runas` 拉起 `FanControl.exe`（没有启动器才退回 `FanControl.Host.exe`），随后重试连接（8 × 250 ms）。
 - 开机自启：计划任务是 `FanControl`，动作 <安装目录>\FanControl.exe --autostart（与 1.3.0 完全一致，升级后旧任务继续有效）；`AutostartManager.ResolveLaunchTarget()` 优先选同目录的启动器。
-- 进程组：后台用 `CreateProcessW` 起 `FanControl.UI.exe --spawned` 并 `AssignProcessToJobObject`，job 带 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`，后台退出时界面一起结束，任务管理器里两者归为一行。
+- 进程组：命名 Job Object `Local\FanControl.Group`（`src/FanControl.Host/ProcessGroup.cs`）。守护进程启动时创建它、把自己 `AssignProcessToJobObject` 进组并持有句柄到进程退出；此后它 `CreateProcess` 拉起的界面自动继承同一组。界面若被单独启动（没有后台），会在启动时自己 `OpenJobObjectW` 加入再立刻关句柄。
+- 组的行为：Job 带 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`。守护进程一退出（托盘退出、崩溃、任务管理器结束、`taskkill /IM FanControl.Host.exe`），它的句柄关闭 → 组内界面随之结束，不会留下孤儿窗口；反过来关掉界面只是普通退出，后台继续采样与控风扇。
+- 句柄纪律：只有守护进程长期持有 Job 句柄。界面加入后必须立刻 `CloseHandle`，否则它会替组续命，`KILL_ON_JOB_CLOSE` 就永远不触发。
+- 启动器 `FanControl.exe` 不进组：它拉起后台、发一次「显示界面」信号就退出（< 1 秒），留在组里没有意义。
 - 已知取舍：由管理员后台拉起的界面会继承管理员令牌。
 
 ## 状态归属

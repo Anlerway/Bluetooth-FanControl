@@ -5,23 +5,20 @@ using Microsoft.Extensions.Logging;
 namespace FanControl.Host;
 
 /// <summary>
-/// 按需拉起 C++ 界面进程，并把它挂进守护进程的 Job Object：
-/// 守护进程退出（或被任务管理器结束）时，界面进程随之结束，不会残留孤儿窗口。
+/// 按需拉起 C++ 界面进程。界面是本进程的子进程，启动即继承进程组
+/// （<see cref="ProcessGroup"/>，Local\FanControl.Group），守护进程退出时随组结束，
+/// 不会残留孤儿窗口。
 /// </summary>
 internal sealed class UiLauncher : IDisposable
 {
     private const string UiWindowClass = "FanControlUI";
     private const string UiFileName = "FanControl.UI.exe";
 
-    private const uint JobObjectLimitKillOnJobClose = 0x2000;
-    private const int JobObjectExtendedLimitInformation = 9;
     private const uint CreateNoWindow = 0x08000000;
-    private const uint GenericRead = 0x80000000;
     private const int SwRestore = 9;
 
     private readonly ILogger<UiLauncher> _logger;
     private readonly object _gate = new();
-    private IntPtr _job;
 
     public UiLauncher(ILogger<UiLauncher> logger)
     {
@@ -70,19 +67,9 @@ internal sealed class UiLauncher : IDisposable
             throw new Win32Exception(error, "CreateProcess 失败。");
         }
 
-        try
-        {
-            var job = EnsureJob();
-            if (job != IntPtr.Zero && !AssignProcessToJobObject(job, info.hProcess))
-            {
-                _logger.LogWarning("界面进程未能加入 Job Object：{Error}", Marshal.GetLastWin32Error());
-            }
-        }
-        finally
-        {
-            CloseHandle(info.hThread);
-            CloseHandle(info.hProcess);
-        }
+        // 子进程自动继承进程组，这里只需要关掉句柄。
+        CloseHandle(info.hThread);
+        CloseHandle(info.hProcess);
     }
 
     private static string? ResolveUiPath()
@@ -97,49 +84,8 @@ internal sealed class UiLauncher : IDisposable
         return File.Exists(sibling) ? sibling : null;
     }
 
-    private IntPtr EnsureJob()
-    {
-        if (_job != IntPtr.Zero)
-        {
-            return _job;
-        }
-
-        _job = CreateJobObjectW(IntPtr.Zero, null);
-        if (_job == IntPtr.Zero)
-        {
-            _logger.LogWarning("创建 Job Object 失败：{Error}", Marshal.GetLastWin32Error());
-            return IntPtr.Zero;
-        }
-
-        var info = new JobExtendedLimitInfo { BasicLimitInformation = { LimitFlags = JobObjectLimitKillOnJobClose } };
-        var size = Marshal.SizeOf<JobExtendedLimitInfo>();
-        var buffer = Marshal.AllocHGlobal(size);
-        try
-        {
-            Marshal.StructureToPtr(info, buffer, false);
-            if (!SetInformationJobObject(_job, JobObjectExtendedLimitInformation, buffer, (uint)size))
-            {
-                _logger.LogWarning("设置 Job Object 限制失败：{Error}", Marshal.GetLastWin32Error());
-            }
-        }
-        finally
-        {
-            Marshal.FreeHGlobal(buffer);
-        }
-
-        return _job;
-    }
-
     public void Dispose()
     {
-        lock (_gate)
-        {
-            if (_job != IntPtr.Zero)
-            {
-                CloseHandle(_job);
-                _job = IntPtr.Zero;
-            }
-        }
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -174,42 +120,6 @@ internal sealed class UiLauncher : IDisposable
         public int dwThreadId;
     }
 
-    [StructLayout(LayoutKind.Sequential)]
-    private struct JobObjectBasicLimitInformation
-    {
-        public long PerProcessUserTimeLimit;
-        public long PerJobUserTimeLimit;
-        public uint LimitFlags;
-        public UIntPtr MinimumWorkingSetSize;
-        public UIntPtr MaximumWorkingSetSize;
-        public uint ActiveProcessLimit;
-        public UIntPtr Affinity;
-        public uint PriorityClass;
-        public uint SchedulingClass;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct IoCounters
-    {
-        public ulong ReadOperationCount;
-        public ulong WriteOperationCount;
-        public ulong OtherOperationCount;
-        public ulong ReadTransferCount;
-        public ulong WriteTransferCount;
-        public ulong OtherTransferCount;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    private struct JobExtendedLimitInfo
-    {
-        public JobObjectBasicLimitInformation BasicLimitInformation;
-        public IoCounters IoInfo;
-        public UIntPtr ProcessMemoryLimit;
-        public UIntPtr JobMemoryLimit;
-        public UIntPtr PeakProcessMemoryUsed;
-        public UIntPtr PeakJobMemoryUsed;
-    }
-
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     private static extern bool CreateProcessW(
         string lpApplicationName,
@@ -222,15 +132,6 @@ internal sealed class UiLauncher : IDisposable
         string? lpCurrentDirectory,
         ref StartupInfo lpStartupInfo,
         out ProcessInformation lpProcessInformation);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern IntPtr CreateJobObjectW(IntPtr lpJobAttributes, string? lpName);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool SetInformationJobObject(IntPtr hJob, int infoClass, IntPtr lpInfo, uint cbInfoLength);
-
-    [DllImport("kernel32.dll", SetLastError = true)]
-    private static extern bool AssignProcessToJobObject(IntPtr hJob, IntPtr hProcess);
 
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool CloseHandle(IntPtr hObject);

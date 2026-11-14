@@ -14,6 +14,19 @@
 namespace {
 App g_app;
 
+// 加入守护进程的命名进程组（Local\FanControl.Group）。界面通常由守护进程拉起，
+// 创建时已经自动继承；这里兜住“界面先被单独启动”的情况。
+// 加入后必须立刻关句柄：留着会让 Job 在守护进程退出后依然活着，
+// KILL_ON_JOB_CLOSE 就不会把界面带走。
+void JoinProcessGroup() {
+    HANDLE job = OpenJobObjectW(JOB_OBJECT_ASSIGN_PROCESS, FALSE, L"Local\\FanControl.Group");
+    if (job == nullptr) {
+        return;
+    }
+    AssignProcessToJobObject(job, GetCurrentProcess());
+    CloseHandle(job);
+}
+
 void ApplyWindowStyle(HWND hwnd, bool dark) {
     BOOL useDark = dark ? TRUE : FALSE;
     DwmSetWindowAttribute(hwnd, 20, &useDark, sizeof(useDark));   // DWMWA_USE_IMMERSIVE_DARK_MODE
@@ -176,6 +189,7 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
 int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR cmdLine, int) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    JoinProcessGroup();
     if (cmdLine) {
         const wchar_t* dumpArg = wcsstr(cmdLine, L"--dump=");
         if (dumpArg) {

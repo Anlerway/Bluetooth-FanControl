@@ -40,6 +40,9 @@ internal static class Program
             return 0;
         }
 
+        // 进入命名进程组：界面由本进程拉起后自动继承，守护进程退出时整组结束。
+        ProcessGroup.Join(message => Trace.WriteLine(message));
+
         // 事件要在耗时初始化之前就创建：启动器（FanControl.exe）可能在守护进程还没就绪时
         // 就发来“显示界面”的信号，AutoReset 事件会把这次信号保留到界面线程开始等待。
         using var showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowWindowEventName);
