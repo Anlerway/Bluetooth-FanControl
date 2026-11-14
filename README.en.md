@@ -20,13 +20,13 @@
 
 | Dashboard | Curve editor |
 | --- | --- |
-| ![Dashboard](screenshots/zh1.png) | ![Curve editor](screenshots/zh2.png) |
+| ![Dashboard](screenshots/en1.png) | ![Curve editor](screenshots/en2.png) |
 
 | Settings | About |
 | --- | --- |
-| ![Settings](screenshots/zh3.png) | ![About](screenshots/zh4.png) |
+| ![Settings](screenshots/en3.png) | ![About](screenshots/en4.png) |
 
-> The UI is currently Chinese-only (the localization layer went away with the old WPF front end).
+> The UI ships in Simplified Chinese and English. Switch it in **Settings → Language**; the choice is stored in `AppConfig.Language` and applied on the next start too. The screenshots above are the English UI.
 
 ## Overview
 

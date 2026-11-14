@@ -26,6 +26,8 @@
 | --- | --- |
 | ![设置](screenshots/zh3.png) | ![关于](screenshots/zh4.png) |
 
+> 界面支持简体中文与英文，可在 **设置 → 语言** 切换（英文界面见 [README.en.md](README.en.md)）。选择写入 `AppConfig.Language`，重启后保持。
+
 ## 简介
 
 在垃圾研究社开源硬件的基础上，针对实际体验做了完整重制：

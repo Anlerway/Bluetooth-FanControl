@@ -1,4 +1,5 @@
 #include "app.h"
+#include "i18n.h"
 #include <dwmapi.h>
 #include <shellapi.h>
 #include <winreg.h>
@@ -12,7 +13,14 @@ namespace {
 constexpr float kSidebarWidth = 280.0f;
 constexpr float kContentPad = 32.0f;
 constexpr int kHistoryPoints = 240;
-const wchar_t* kPages[] = { L"仪表盘", L"设置", L"曲线", L"关于" };
+const wchar_t* PageName(int index) {
+    switch (index) {
+    case 0: return fc::T(L"仪表盘");
+    case 1: return fc::T(L"设置");
+    case 2: return fc::T(L"曲线");
+    default: return fc::T(L"关于");
+    }
+}
 
 std::wstring Fmt(const wchar_t* fmt, ...) {
     wchar_t buf[256];
@@ -264,12 +272,14 @@ void App::Switch(float x, float y, bool on) {
     FillRound(k, knob / 2, on ? theme_.accentText : theme_.textPrimary);
 }
 
-void App::Chip(float x, float y, float w, float h, const std::wstring& text, bool accent) {
+void App::Chip(float x, float y, float w, float h, const std::wstring& text, bool accent,
+               const std::wstring& id) {
     D2D1_RECT_F r = D2D1::RectF(x, y, x + w, y + h);
     FillRound(r, 4.0f, accent ? theme_.accent : theme_.controlBg);
     if (!accent) StrokeRound(r, 4.0f, theme_.controlBorder);
     TextCentered(text, r, fBody_, accent ? theme_.accentText : theme_.textPrimary);
-    AddHit(r, L"chip:" + text);
+    // 命中 id 用固定标识，不跟显示文本走，否则切换语言后按钮就点不动了
+    AddHit(r, id.empty() ? L"chip:" + text : L"chip:" + id);
 }
 
 void App::RowButton(float x, float y, float w, float h, const std::wstring& id, const std::wstring& title,
@@ -336,7 +346,7 @@ void App::DrawSidebar(float w, float h) {
     FillRound(search, 4.0f, theme_.controlBg);
     StrokeRound(search, 4.0f, theme_.controlBorder);
     Glyph(L"\xE721", D2D1::RectF(28, 66, 48, 86), 12.0f, theme_.textTertiary);
-    Text(L"搜索设置", D2D1::RectF(52, 60, kSidebarWidth - 32, 92), fSmall_, theme_.textTertiary);
+    Text(fc::T(L"搜索设置"), D2D1::RectF(52, 60, kSidebarWidth - 32, 92), fSmall_, theme_.textTertiary);
     AddHit(search, L"search");
 
     float y = 110.0f;
@@ -352,7 +362,7 @@ void App::DrawSidebar(float w, float h) {
         }
         const wchar_t* icons[] = { L"\xE80F", L"\xE713", L"\xE9D2", L"\xE946" };
         Glyph(icons[i], D2D1::RectF(28, y + 8, 48, y + 28), 15.0f, selected ? theme_.textPrimary : theme_.textSecondary);
-        Text(kPages[i], D2D1::RectF(56, y + 6, kSidebarWidth - 24, y + 30), fBody_,
+        Text(PageName(i), D2D1::RectF(56, y + 6, kSidebarWidth - 24, y + 30), fBody_,
              selected ? theme_.textPrimary : theme_.textSecondary);
         AddHit(item, id);
         y += 40.0f;
@@ -362,9 +372,9 @@ void App::DrawSidebar(float w, float h) {
     float by = h - 64.0f;
     D2D1_COLOR_F dot = snap_.backendConnected ? theme_.ok : theme_.textTertiary;
     FillRound(D2D1::RectF(24, by + 8, 32, by + 16), 4.0f, dot);
-    Text(snap_.backendConnected ? L"后台已连接" : L"演示数据（后台未连接）",
+    Text(snap_.backendConnected ? fc::T(L"后台已连接") : fc::T(L"演示数据（后台未连接）"),
          D2D1::RectF(40, by, kSidebarWidth - 20, by + 24), fSmall_, theme_.textSecondary);
-    Text(Fmt(L"后台 v1.4.0 · %s", dark_ ? L"深色" : L"浅色"),
+    Text(Fmt(fc::T(L"后台 v1.4.0 · %s"), dark_ ? fc::T(L"深色") : fc::T(L"浅色")),
          D2D1::RectF(24, by + 24, kSidebarWidth - 20, by + 48), fSmall_, theme_.textTertiary);
 }
 
@@ -372,9 +382,9 @@ void App::DrawDashboard(float x, float y, float w) {
     float cardW = (w - 16.0f) / 3.0f;
     struct Stat { const wchar_t* label; std::wstring value; const wchar_t* unit; const wchar_t* sub; };
     Stat stats[3] = {
-        { L"CPU 温度", snap_.cpu > 0.0 ? Fmt(L"%.1f", snap_.cpu) : L"—", L"°C", L"LHM 封装传感器" },
-        { L"GPU 温度", snap_.gpu > 0.0 ? Fmt(L"%.1f", snap_.gpu) : L"—", L"°C", L"未启用时回退 CPU" },
-        { L"风扇 PWM", Fmt(L"%d", snap_.pwm), L"%", L"转速见趋势" },
+        { fc::T(L"CPU 温度"), snap_.cpu > 0.0 ? Fmt(L"%.1f", snap_.cpu) : L"—", L"°C", fc::T(L"LHM 封装传感器") },
+        { fc::T(L"GPU 温度"), snap_.gpu > 0.0 ? Fmt(L"%.1f", snap_.gpu) : L"—", L"°C", fc::T(L"未启用时回退 CPU") },
+        { fc::T(L"风扇 PWM"), Fmt(L"%d", snap_.pwm), L"%", fc::T(L"转速见趋势") },
     };
     for (int i = 0; i < 3; ++i) {
         float cx = x + i * (cardW + 8.0f);
@@ -394,7 +404,7 @@ void App::DrawDashboard(float x, float y, float w) {
     D2D1_RECT_F card = D2D1::RectF(x, y, x + w, y + h);
     FillRound(card, 8.0f, theme_.cardBg);
     StrokeRound(card, 8.0f, theme_.cardBorder);
-    Text(L"最近 4 分钟", D2D1::RectF(x + 16, y + 12, x + w - 200, y + 34), fBodyStrong_,
+    Text(fc::T(L"最近 4 分钟"), D2D1::RectF(x + 16, y + 12, x + w - 200, y + 34), fBodyStrong_,
          theme_.textPrimary);
     // 图例
     float lx = x + w - 210;
@@ -435,12 +445,12 @@ void App::DrawDashboard(float x, float y, float w) {
     D2D1_RECT_F st = D2D1::RectF(x, y, x + w, y + sh);
     FillRound(st, 8.0f, theme_.cardBg);
     StrokeRound(st, 8.0f, theme_.cardBorder);
-    Text(L"连接状态", D2D1::RectF(x + 16, y + 12, x + w - 16, y + 34), fBodyStrong_, theme_.textPrimary);
+    Text(fc::T(L"连接状态"), D2D1::RectF(x + 16, y + 12, x + w - 16, y + 34), fBodyStrong_, theme_.textPrimary);
     struct KV { const wchar_t* k; std::wstring v; };
     KV rows[3] = {
-        { L"通信", snap_.commMode },
-        { L"设备", snap_.deviceConnected ? L"已连接" : L"未连接" },
-        { L"最近错误", snap_.lastError.empty() ? L"无" : snap_.lastError },
+        { fc::T(L"通信"), snap_.commMode },
+        { fc::T(L"设备"), snap_.deviceConnected ? fc::T(L"已连接") : fc::T(L"未连接") },
+        { fc::T(L"最近错误"), snap_.lastError.empty() ? fc::T(L"无") : snap_.lastError },
     };
     float ry = y + 44;
     for (auto& kv : rows) {
@@ -457,8 +467,8 @@ std::wstring SourceLabel(const std::wstring& value) {
     if (value == L"AtkAcpi") return L"ATK ACPI";
     if (value == L"Wmi") return L"WMI";
     if (value == L"Aida64") return L"AIDA64";
-    if (value == L"Simulated") return L"模拟数据";
-    if (value == L"Serial") return L"串口";
+    if (value == L"Simulated") return fc::T(L"模拟数据");
+    if (value == L"Serial") return fc::T(L"串口");
     return value;
 }
 } // namespace
@@ -467,46 +477,47 @@ void App::DrawSettings(float x, float y, float w) {
     float top = y;
     float rowH = 64.0f;
 
-    Text(L"通用", D2D1::RectF(x, y, x + w, y + 22), fSmall_, theme_.textSecondary);
+    Text(fc::T(L"通用"), D2D1::RectF(x, y, x + w, y + 22), fSmall_, theme_.textSecondary);
     y += 26;
     Card(x, y, w, L"", 4 * rowH + 8);
     float ry = y + 4;
-    RowButton(x, ry, w, rowH, L"set:theme", L"应用主题", L"跟随系统 / 深色 / 浅色", ThemeLabel());
+    RowButton(x, ry, w, rowH, L"set:theme", fc::T(L"应用主题"), fc::T(L"跟随系统 / 深色 / 浅色"), ThemeLabel());
     ry += rowH;
-    RowButton(x, ry, w, rowH, L"set:lang", L"语言", L"界面语言", L"简体中文");
+    RowButton(x, ry, w, rowH, L"set:lang", fc::T(L"语言"), fc::T(L"界面语言"), LangLabel());
     ry += rowH;
-    RowButton(x, ry, w, rowH, L"set:unit", L"温度单位", L"仪表盘与曲线显示单位", UnitLabel());
+    RowButton(x, ry, w, rowH, L"set:unit", fc::T(L"温度单位"), fc::T(L"仪表盘与曲线显示单位"), UnitLabel());
     ry += rowH;
-    RowToggle(x, ry, w, rowH, L"set:autostart", L"开机自启", L"登录后自动启动后台守护进程", autostart_);
+    RowToggle(x, ry, w, rowH, L"set:autostart", fc::T(L"开机自启"), fc::T(L"登录后自动启动后台守护进程"), autostart_);
     y += 4 * rowH + 8 + 20;
 
-    Text(L"硬件", D2D1::RectF(x, y, x + w, y + 22), fSmall_, theme_.textSecondary);
+    Text(fc::T(L"硬件"), D2D1::RectF(x, y, x + w, y + 22), fSmall_, theme_.textSecondary);
     y += 26;
     Card(x, y, w, L"", 3 * rowH + 8);
     ry = y + 4;
-    RowButton(x, ry, w, rowH, L"set:tempsrc", L"温度来源", L"LibreHardwareMonitor / ATK ACPI / WMI",
+    RowButton(x, ry, w, rowH, L"set:tempsrc", fc::T(L"温度来源"), L"LibreHardwareMonitor / ATK ACPI / WMI",
               SourceLabel(config_.temperatureSource));
     ry += rowH;
-    RowButton(x, ry, w, rowH, L"set:fansrc", L"转速来源", L"EC 直读 / LibreHardwareMonitor / AIDA64",
+    RowButton(x, ry, w, rowH, L"set:fansrc", fc::T(L"转速来源"),
+              std::wstring(fc::T(L"EC 直读")) + L" / LibreHardwareMonitor / AIDA64",
               SourceLabel(config_.fanSpeedSource));
     ry += rowH;
-    RowButton(x, ry, w, rowH, L"set:comm", L"通信方式", L"蓝牙 BLE 或串口",
-              config_.communicationType == L"Com" ? (L"串口 " + config_.comPort) : L"蓝牙 BLE");
+    RowButton(x, ry, w, rowH, L"set:comm", fc::T(L"通信方式"), fc::T(L"蓝牙 BLE 或串口"),
+              config_.communicationType == L"Com" ? (std::wstring(fc::T(L"串口")) + L" " + config_.comPort) : fc::T(L"蓝牙 BLE"));
     y += 3 * rowH + 8 + 20;
 
-    Text(L"控制", D2D1::RectF(x, y, x + w, y + 22), fSmall_, theme_.textSecondary);
+    Text(fc::T(L"控制"), D2D1::RectF(x, y, x + w, y + 22), fSmall_, theme_.textSecondary);
     y += 26;
     Card(x, y, w, L"", 2 * rowH + 8);
     ry = y + 4;
-    RowSlider(x, ry, w, rowH, L"set:smooth", L"平滑窗口", L"PWM 变化的过渡时间", smoothMs_, 100, 3000);
+    RowSlider(x, ry, w, rowH, L"set:smooth", fc::T(L"平滑窗口"), fc::T(L"PWM 变化的过渡时间"), smoothMs_, 100, 3000);
     ry += rowH;
-    RowToggle(x, ry, w, rowH, L"set:notify", L"断连通知", L"蓝牙断开时弹出系统通知", config_.notifyOnBleDisconnect);
+    RowToggle(x, ry, w, rowH, L"set:notify", fc::T(L"断连通知"), fc::T(L"蓝牙断开时弹出系统通知"), config_.notifyOnBleDisconnect);
     y += 2 * rowH + 8 + 20;
 
-    Text(L"维护", D2D1::RectF(x, y, x + w, y + 22), fSmall_, theme_.textSecondary);
+    Text(fc::T(L"维护"), D2D1::RectF(x, y, x + w, y + 22), fSmall_, theme_.textSecondary);
     y += 26;
     Card(x, y, w, L"", rowH + 8);
-    RowButton(x, y + 4, w, rowH, L"set:logs", L"日志目录", L"打开日志所在文件夹", L"");
+    RowButton(x, y + 4, w, rowH, L"set:logs", fc::T(L"日志目录"), fc::T(L"打开日志所在文件夹"), L"");
     y += rowH + 8 + 16;
 
     contentHeight_ = y - top + 24.0f;
@@ -517,7 +528,7 @@ void App::DrawCurve(float x, float y, float w) {
     D2D1_RECT_F card = D2D1::RectF(x, y, x + w, y + h);
     FillRound(card, 8.0f, theme_.cardBg);
     StrokeRound(card, 8.0f, theme_.cardBorder);
-    Text(L"温度 → PWM 曲线", D2D1::RectF(x + 16, y + 12, x + w - 16, y + 34), fBodyStrong_, theme_.textPrimary);
+    Text(fc::T(L"温度 → PWM 曲线"), D2D1::RectF(x + 16, y + 12, x + w - 16, y + 34), fBodyStrong_, theme_.textPrimary);
 
     D2D1_RECT_F plot = D2D1::RectF(x + 56, y + 56, x + w - 32, y + h - 48);
     curvePlot_ = plot;
@@ -531,7 +542,7 @@ void App::DrawCurve(float x, float y, float w) {
         TextCentered(Fmt(L"%d", i * 20), D2D1::RectF(gx - 20, plot.bottom + 4, gx + 20, plot.bottom + 24), fSmall_,
                      theme_.textTertiary);
     }
-    TextCentered(L"温度 °C", D2D1::RectF(plot.left, plot.bottom + 26, plot.right, plot.bottom + 46), fSmall_,
+    TextCentered(fc::T(L"温度 °C"), D2D1::RectF(plot.left, plot.bottom + 26, plot.right, plot.bottom + 46), fSmall_,
                  theme_.textTertiary);
 
     auto toX = [&](double t) { return plot.left + static_cast<float>(t / 100.0) * (plot.right - plot.left); };
@@ -547,9 +558,9 @@ void App::DrawCurve(float x, float y, float w) {
     }
 
     float by = y + h + 16;
-    Chip(x, by, 96, 32, L"重置曲线", false);
-    Chip(x + 104, by, 96, 32, L"应用", true);
-    Text(L"拖动圆点调整映射，双击空白处新增点", D2D1::RectF(x + 216, by, x + w, by + 32), fSmall_,
+    Chip(x, by, 96, 32, fc::T(L"重置曲线"), false, L"reset");
+    Chip(x + 104, by, 96, 32, fc::T(L"应用"), true, L"apply");
+    Text(fc::T(L"拖动圆点调整映射，双击空白处新增点"), D2D1::RectF(x + 216, by, x + w, by + 32), fSmall_,
          theme_.textTertiary);
     contentHeight_ = by + 32 + 24 - y;
 }
@@ -559,10 +570,10 @@ void App::DrawAbout(float x, float y, float w) {
     Card(x, y, w, L"", 4 * rowH + 8);
     struct Row { const wchar_t* k; std::wstring v; };
     Row rows[4] = {
-        { L"版本", L"0.1.0（C++ UI 预览）" },
-        { L"界面", L"Win32 + Direct2D / DirectWrite" },
-        { L"后端", snap_.backendConnected ? L"FanControl 守护进程（命名管道）" : L"未连接（演示数据）" },
-        { L"配置文件", L"%LOCALAPPDATA%\\FanControl\\config.json" },
+        { fc::T(L"版本"), fc::T(L"1.4.0（C++ UI）") },
+        { fc::T(L"界面"), L"Win32 + Direct2D / DirectWrite" },
+        { fc::T(L"后端"), snap_.backendConnected ? fc::T(L"FanControl 守护进程（命名管道）") : fc::T(L"未连接（演示数据）") },
+        { fc::T(L"配置文件"), L"%LOCALAPPDATA%\\FanControl\\config.json" },
     };
     float ry = y + 4;
     for (auto& r : rows) {
@@ -571,8 +582,8 @@ void App::DrawAbout(float x, float y, float w) {
         ry += rowH;
     }
     y += 4 * rowH + 8 + 20;
-    Chip(x, y, 110, 32, L"打开日志目录", false);
-    Chip(x + 118, y, 110, 32, L"检查更新", false);
+    Chip(x, y, 110, 32, fc::T(L"打开日志目录"), false, L"logs");
+    Chip(x + 118, y, 110, 32, fc::T(L"检查更新"), false, L"update");
     contentHeight_ = y + 32 + 24 - y;
 }
 
@@ -596,8 +607,9 @@ void App::Paint() {
     float clipBottom = size.height - 8.0f;
     rt_->PushAxisAlignedClip(D2D1::RectF(kSidebarWidth, 0, size.width, clipBottom), D2D1_ANTIALIAS_MODE_ALIASED);
     float top = 28.0f - scroll_;
-    const wchar_t* subtitles[] = { L"实时温度、转速与趋势", L"外观、硬件来源与控制行为", L"温度到风扇转速的映射", L"版本与运行信息" };
-    Text(kPages[static_cast<int>(page_)], D2D1::RectF(cx, top, cx + cw, top + 40), fTitle_, theme_.textPrimary);
+    const wchar_t* subtitles[] = { fc::T(L"实时温度、转速与趋势"), fc::T(L"外观、硬件来源与控制行为"),
+                                   fc::T(L"温度到风扇转速的映射"), fc::T(L"版本与运行信息") };
+    Text(PageName(static_cast<int>(page_)), D2D1::RectF(cx, top, cx + cw, top + 40), fTitle_, theme_.textPrimary);
     Text(subtitles[static_cast<int>(page_)], D2D1::RectF(cx, top + 40, cx + cw, top + 62), fSmall_, theme_.textSecondary);
 
     float bodyY = top + 84;
@@ -717,13 +729,19 @@ void App::OnLButtonDown(int x, int y) {
                 DwmSetWindowAttribute(hwnd_, 20, &useDark, sizeof(useDark));
             }
             InvalidateRect(hwnd_, nullptr, FALSE);
+        } else if (id == L"set:lang") {
+            const bool toEn = !fc::IsEn();
+            config_.language = toEn ? L"en-US" : L"zh-CN";
+            fc::SetLang(toEn ? fc::Lang::En : fc::Lang::Zh);
+            SendValue("language", toEn ? "\"en-US\"" : "\"zh-CN\"");
+            InvalidateRect(hwnd_, nullptr, FALSE);
         } else if (id == L"set:unit") {
             config_.temperatureUnit = config_.temperatureUnit == L"Fahrenheit" ? L"Celsius" : L"Fahrenheit";
             SendValue("temperatureUnit", config_.temperatureUnit == L"Fahrenheit" ? "\"Fahrenheit\"" : "\"Celsius\"");
             InvalidateRect(hwnd_, nullptr, FALSE);
         } else if (id == L"set:autostart") {
             autostart_ = !autostart_;
-            toast_ = autostart_ ? L"开机自启由安装器写入（待接线）" : L"已关闭开机自启（待接线）";
+            toast_ = autostart_ ? fc::T(L"开机自启由安装器写入（待接线）") : fc::T(L"已关闭开机自启（待接线）");
             toastUntil_ = GetTickCount() + 2000;
             InvalidateRect(hwnd_, nullptr, FALSE);
         } else if (id == L"set:notify") {
@@ -758,14 +776,21 @@ void App::OnLButtonDown(int x, int y) {
             config_.communicationType = config_.communicationType == L"Com" ? L"Ble" : L"Com";
             SendValue("communicationType", config_.communicationType == L"Com" ? "\"Com\"" : "\"Ble\"");
             InvalidateRect(hwnd_, nullptr, FALSE);
-        } else if (id == L"set:logs") {
+        } else if (id == L"set:logs" || id == L"chip:logs") {
             ShellExecuteW(nullptr, L"open", L"explorer.exe", L"%APPDATA%\\FanControl\\Logs", nullptr, SW_SHOWNORMAL);
-        } else if (id == L"chip:重置曲线") {
+        } else if (id == L"chip:apply") {
+            PushCurveToBackend();
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        } else if (id == L"chip:update") {
+            toast_ = fc::T(L"当前已是最新版本");
+            toastUntil_ = GetTickCount() + 1800;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        } else if (id == L"chip:reset") {
             curve_ = { {30, 20}, {50, 30}, {65, 48}, {75, 70}, {85, 90}, {95, 100} };
             PushCurveToBackend();
             InvalidateRect(hwnd_, nullptr, FALSE);
         } else {
-            toast_ = L"命令已发送：" + id;
+            toast_ = fc::T(L"命令已发送：") + id;
             toastUntil_ = GetTickCount() + 1500;
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
@@ -869,7 +894,7 @@ void App::OnIpcStatus(bool connected) {
     backendUp_ = connected;
     snap_.backendConnected = connected;
     if (!connected) {
-        snap_.commMode = L"等待后台连接";
+        snap_.commMode = fc::T(L"等待后台连接");
         snap_.lastError.clear();
     } else {
         // 连上后台后丢弃演示历史，只保留真实采样
@@ -893,6 +918,12 @@ void App::ApplyConfig(const fc::Config& config) {
     const bool first = !hasConfig_;
     config_ = config;
     hasConfig_ = true;
+    // 语言跟着后台配置走：后台是唯一写盘方，换语言后重启界面仍然是同一种
+    const fc::Lang lang = config.language.rfind(L"en", 0) == 0 ? fc::Lang::En : fc::Lang::Zh;
+    if (lang != fc::GetLang()) {
+        fc::SetLang(lang);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    }
     smoothMs_ = std::clamp(static_cast<int>(config.pwmSmoothingWindowSeconds * 1000.0), 100, 3000);
     if (first || (dragIndex_ < 0 && curve_.size() != config.curve.size())) {
         if (dragIndex_ < 0) {
@@ -924,8 +955,9 @@ void App::ApplyState(const fc::State& state) {
     snap_.rpm = static_cast<int>(std::lround(state.rpm));
     snap_.deviceConnected = state.connected;
     snap_.backendConnected = true;
-    const std::wstring prefix = state.communicationType == L"Com" ? L"串口 " : L"蓝牙 ";
-    snap_.commMode = prefix + (state.deviceName.empty() ? std::wstring(L"未配对设备") : state.deviceName);
+    const std::wstring prefix = state.communicationType == L"Com" ? std::wstring(fc::T(L"串口")) + L" · "
+                                                                  : std::wstring(fc::T(L"蓝牙")) + L" · ";
+    snap_.commMode = prefix + (state.deviceName.empty() ? std::wstring(fc::T(L"未配对设备")) : state.deviceName);
     if (!state.lastError.empty()) snap_.lastError = state.lastError;
     if (cpuHist_.empty()) {
         // 首次连上后台：用当前值铺满窗口，避免趋势图一开始只有左端一两个点
@@ -950,13 +982,17 @@ void App::PushCurveToBackend() {
 }
 
 std::wstring App::ThemeLabel() const {
-    if (config_.theme == L"Dark") return L"深色";
-    if (config_.theme == L"Light") return L"浅色";
-    return L"跟随系统";
+    if (config_.theme == L"Dark") return fc::T(L"深色");
+    if (config_.theme == L"Light") return fc::T(L"浅色");
+    return fc::T(L"跟随系统");
 }
 
 std::wstring App::UnitLabel() const {
-    return config_.temperatureUnit == L"Fahrenheit" ? L"华氏度 °F" : L"摄氏度 °C";
+    return config_.temperatureUnit == L"Fahrenheit" ? fc::T(L"华氏度 °F") : fc::T(L"摄氏度 °C");
+}
+
+std::wstring App::LangLabel() const {
+    return fc::IsEn() ? L"English" : fc::T(L"简体中文");
 }
 
 
@@ -971,7 +1007,7 @@ void App::StartHostProcess() {
     auto result = reinterpret_cast<INT_PTR>(
         ShellExecuteW(nullptr, L"runas", path, nullptr, nullptr, SW_SHOWNORMAL));
     if (result <= 32) {
-        toast_ = L"启动后台失败（需要管理员权限）";
+        toast_ = fc::T(L"启动后台失败（需要管理员权限）");
         toastUntil_ = GetTickCount() + 3000;
     }
 }

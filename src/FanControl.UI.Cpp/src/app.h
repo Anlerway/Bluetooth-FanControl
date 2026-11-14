@@ -102,7 +102,8 @@ private:
     void RowSlider(float x, float y, float w, float h, const std::wstring& id, const std::wstring& title,
                    const std::wstring& subtitle, int value, int lo, int hi);
     void Switch(float x, float y, bool on);
-    void Chip(float x, float y, float w, float h, const std::wstring& text, bool accent);
+    void Chip(float x, float y, float w, float h, const std::wstring& text, bool accent,
+              const std::wstring& id = L"");
 
     void BuildHistory(float dt);
 
@@ -159,6 +160,7 @@ private:
     void StartHostProcess();
     std::wstring ThemeLabel() const;
     std::wstring UnitLabel() const;
+    std::wstring LangLabel() const;
 
     std::unique_ptr<fc::IpcClient> ipc_;
     std::thread ipcThread_;

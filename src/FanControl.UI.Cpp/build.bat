@@ -27,7 +27,7 @@ if errorlevel 1 exit /b 1
 cl /nologo /std:c++20 /EHsc /utf-8 /W4 /permissive- ^
    /DUNICODE /D_UNICODE /DNOMINMAX /DWIN32_LEAN_AND_MEAN ^
    /Fo:build\ /Fe:build\FanControl.UI.exe ^
-   src\main.cpp src\app.cpp src\ipc.cpp build\resource.res ^
+   src\main.cpp src\app.cpp src\ipc.cpp src\i18n.cpp build\resource.res ^
    /link /SUBSYSTEM:WINDOWS /MANIFEST:EMBED /MANIFESTINPUT:app.manifest ^
    d2d1.lib dwrite.lib dwmapi.lib user32.lib gdi32.lib shell32.lib ole32.lib advapi32.lib
 exit /b %ERRORLEVEL%

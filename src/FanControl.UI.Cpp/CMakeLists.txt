@@ -8,6 +8,7 @@ add_executable(FanControl.UI WIN32
     src/main.cpp
     src/app.cpp
     src/ipc.cpp
+    src/i18n.cpp
     resource.rc
 )
 

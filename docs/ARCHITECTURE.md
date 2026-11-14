@@ -68,6 +68,13 @@ FanControl.Host.exe (管理员, 常驻)          FanControl.UI.exe (普通权限
 - 界面命令：`hello` / `getState` / `set`（按 key 改单个配置项）/ `setCurve` / `setRpmCurve` / `reconnect` / `showWindow`。
 - 界面侧句柄以 `FILE_FLAG_OVERLAPPED` 打开，读写都带超时；**不能**在连接后立刻同步写——后台先写首帧，同步写会把界面线程堵在管道缓冲上。
 
+## 本地化
+
+- 语言是配置项（`AppConfig.Language`，`zh-CN` / `en-US`），存在后台的配置文件里；**后台是唯一写盘方**，界面只是发 `{"cmd":"set","key":"language"}`。
+- 界面侧的字符串表在 `src/FanControl.UI.Cpp/src/i18n.cpp`：`kEntries[]` 以**中文原文为 key** 映射到英文，`fc::T(L"仪表盘")` 在英文模式下查表、中文模式下原样返回，漏翻只会显示中文，不会显示空串或 key。界面是立即模式：每次 `App::Paint()` 都按当前语言重新排版并重建命中区域，命中 id（如 `set:lang`、`chip:apply`）是固定字符串而不是显示文案，所以换语言后按钮不会失效。
+- 界面启动后收到的第一帧 `config` 会同步语言（`App::ApplyConfig`），所以换语言后重启界面仍是同一种。
+- 后台产生的文案（`ConfigPatch` 的校验错误、`FanControlRuntime` 的 `LastError`）目前只有中文——它们是数据，界面不改写；要双语需要后台把这类字符串改成错误码 + 参数。
+
 ## 设备通信
 
 - 设备侧（ESP32）：BLE（Nordic UART Service）或串口，载荷都是一行 ASCII 文本，详见 [PROTOCOL.md](PROTOCOL.md)。
