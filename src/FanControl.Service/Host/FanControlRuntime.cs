@@ -154,6 +154,12 @@ public sealed class FanControlRuntime : IAsyncDisposable
     /// <summary>最近一次失败的错误码与参数：界面按 code 翻译，LastError 只是中文兜底。</summary>
     public ErrorInfo? LastErrorInfo { get; private set; }
 
+    /// <summary>最近一次通信失败（连接/写入/校时）的原因，链路恢复正常时清空。</summary>
+    public string? LastCommError { get; private set; }
+
+    /// <summary>通信失败的错误码与参数：界面优先用它翻译，LastCommError 是中文兜底。</summary>
+    public ErrorInfo? LastCommErrorInfo { get; private set; }
+
     /// <summary>新数据包到达时触发（后台线程），UI 需自行切回 UI 线程。</summary>
     public event EventHandler? DataChanged;
 
@@ -534,6 +540,7 @@ public sealed class FanControlRuntime : IAsyncDisposable
                     }
 
                     SetConnectionState(CommunicationState.Connected);
+                    ClearCommError();
                 }
                 else
                 {
@@ -551,9 +558,10 @@ public sealed class FanControlRuntime : IAsyncDisposable
             {
                 throw;
             }
-            catch (Exception)
+            catch (Exception ex)
             {
                 SetConnectionState(CommunicationState.Reconnecting);
+                SetCommError(ex);
             }
 
             // 等待下个周期；配置变更时立即退出等待，马上按新配置重连
@@ -696,6 +704,31 @@ public sealed class FanControlRuntime : IAsyncDisposable
 
         _comChannel = null;
         _bleChannel = null;
+    }
+
+    /// <summary>记录通信失败：同一原因只记一次，避免每个重连周期刷日志。</summary>
+    private void SetCommError(Exception ex)
+    {
+        var info = (ex as FanControlException)?.Error ?? ErrorInfo.Of("comm.failed", ex.Message);
+        if (LastCommError == ex.Message && LastCommErrorInfo?.Code == info.Code)
+        {
+            return;
+        }
+
+        LastCommError = ex.Message;
+        LastCommErrorInfo = info;
+        _logger.LogWarning("通信失败：{Message}", ex.Message);
+    }
+
+    private void ClearCommError()
+    {
+        if (LastCommError is null)
+        {
+            return;
+        }
+
+        LastCommError = null;
+        LastCommErrorInfo = null;
     }
 
     private void SetConnectionState(CommunicationState state)

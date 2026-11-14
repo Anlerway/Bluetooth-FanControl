@@ -17,13 +17,13 @@ internal static class StateJson
     // 中文提示/设备名按 UTF-8 原样输出，避免 \uXXXX 转义（C++ 客户端只做最简 JSON 解析）。
     private static readonly JsonWriterOptions WriterOptions = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
-    public static string BuildState(FanControlRuntime runtime)
-        => Build(runtime, includeConfig: true, eventName: "state");
+    public static string BuildState(FanControlRuntime runtime, bool autostart)
+        => Build(runtime, includeConfig: true, eventName: "state", autostart: autostart);
 
-    public static string BuildConfig(FanControlRuntime runtime)
-        => Build(runtime, includeConfig: true, eventName: "config");
+    public static string BuildConfig(FanControlRuntime runtime, bool autostart)
+        => Build(runtime, includeConfig: true, eventName: "config", autostart: autostart);
 
-    private static string Build(FanControlRuntime runtime, bool includeConfig, string eventName)
+    private static string Build(FanControlRuntime runtime, bool includeConfig, string eventName, bool autostart)
     {
         var buffer = new ArrayBufferWriter<byte>(1024);
         using (var writer = new Utf8JsonWriter(buffer, WriterOptions))
@@ -38,7 +38,7 @@ internal static class StateJson
             }
 
             writer.WritePropertyName("state");
-            WriteRuntime(writer, runtime);
+            WriteRuntime(writer, runtime, autostart);
 
             writer.WriteEndObject();
         }
@@ -97,7 +97,7 @@ internal static class StateJson
         writer.WriteEndObject();
     }
 
-    private static void WriteRuntime(Utf8JsonWriter writer, FanControlRuntime runtime)
+    private static void WriteRuntime(Utf8JsonWriter writer, FanControlRuntime runtime, bool autostart)
     {
         var packet = runtime.LatestPacket;
         var config = runtime.CurrentConfig;
@@ -118,6 +118,12 @@ internal static class StateJson
         writer.WriteString("errorCode", error?.Code ?? string.Empty);
         writer.WriteString("errorArg1", error?.Arg1 ?? string.Empty);
         writer.WriteString("errorArg2", error?.Arg2 ?? string.Empty);
+        var commError = runtime.LastCommErrorInfo;
+        writer.WriteString("commError", runtime.LastCommError ?? string.Empty);
+        writer.WriteString("commErrorCode", commError?.Code ?? string.Empty);
+        writer.WriteString("commErrorArg1", commError?.Arg1 ?? string.Empty);
+        writer.WriteString("commErrorArg2", commError?.Arg2 ?? string.Empty);
+        writer.WriteBoolean("autostart", autostart);
         writer.WriteNumber("timestamp", packet?.Timestamp.ToUnixTimeMilliseconds() ?? 0);
         writer.WriteEndObject();
     }

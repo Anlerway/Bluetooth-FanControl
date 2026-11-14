@@ -14,6 +14,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- 测试工程直接覆盖 IPC 层的错误码（ConfigPatch / StateJson 是 internal）。 -->
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>FanControl.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\FanControl.Service\FanControl.Service.csproj" />
     <ProjectReference Include="..\FanControl.Shared\FanControl.Shared.csproj" />
   </ItemGroup>

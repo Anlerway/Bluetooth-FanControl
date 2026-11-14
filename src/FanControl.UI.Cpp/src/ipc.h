@@ -55,8 +55,20 @@ struct State {
     std::wstring errorCode;
     std::wstring errorArg1;
     std::wstring errorArg2;
+    // 通信链路（连接/写入/校时）最近的失败，与温度采样错误分开上报
+    std::wstring commError;
+    std::wstring commErrorCode;
+    std::wstring commErrorArg1;
+    std::wstring commErrorArg2;
     bool connected = false;
+    bool autostart = false;
     long long timestamp = 0;
+};
+
+// 弹窗列表的一项：label 显示，value 是回写给后台的取值
+struct DialogItem {
+    std::wstring label;
+    std::wstring value;
 };
 
 struct Message {
@@ -69,6 +81,11 @@ struct Message {
     std::wstring errorCode;
     std::wstring errorArg1;
     std::wstring errorArg2;
+    // scanBle / listPorts / listGpus 的候选列表
+    std::vector<DialogItem> items;
+    bool hasItems = false;
+    bool autostart = false;
+    bool hasAutostart = false;
 };
 
 /// 与守护进程的命名管道客户端：一帧一个 JSON（4 字节小端长度前缀 + UTF-8）。
@@ -93,10 +110,17 @@ public:
     bool SetCurve(const std::vector<CurvePoint>& points, bool rpmCurve);
     bool RequestReconnect();
     bool RequestState();
+    bool ScanBleDevices();
+    bool ListPorts();
+    bool ListGpus();
+    bool SetAutostart(bool enabled);
 
 private:
     void* pipe_ = nullptr;
-    void* ioEvent_ = nullptr;
+    // 读线程和界面线程会同时做重叠 IO；共用一个事件会让两边的等待互相串信，
+    // 所以读写各用一个事件。
+    void* readEvent_ = nullptr;
+    void* writeEvent_ = nullptr;
 };
 
 /// UTF-8 → UTF-16

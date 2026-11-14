@@ -34,10 +34,18 @@
 | `setCurve` / `setRpmCurve` | `points: [[温度, PWM], …]` | 至少 2 点，后台按 x 排序并 clamp 到 0–100 |
 | `reconnect` | — | 强制重建 BLE / COM 连接 |
 | `showWindow` | — | 唤出 / 激活界面窗口 |
+| `scanBle` | — | 枚举已配对的 BLE 设备，回 `{"event":"bleDevices","devices":[{"name":…,"mac":…}]}` |
+| `listPorts` | — | 枚举串口，回 `{"event":"ports","ports":["COM3",…]}` |
+| `listGpus` | — | 枚举显卡名（WMI，失败回退 nvidia-smi），回 `{"event":"gpus","gpus":[…]}` |
+| `setAutostart` | `value`（布尔） | 写入/删除计划任务 `FanControl`，成功回 `{"event":"ok","cmd":"setAutostart","autostart":true}` |
 
-事件（后台 → 界面）：`hello` / `state` / `config` / `ok` / `error`。
+事件（后台 → 界面）：`hello` / `state` / `config` / `ok` / `error` / `bleDevices` / `ports` / `gpus`。
 
-`state` 字段：`cpu`、`gpu`、`rpm`、`pwm`、`rawPwm`、`mode`、`connectionState`、`connected`、`communicationType`、`deviceName`、`lastError`、`errorCode`、`errorArg1`、`errorArg2`、`timestamp`（epoch ms）。
+`state` 字段：`cpu`、`gpu`、`rpm`、`pwm`、`rawPwm`、`mode`、`connectionState`、`connected`、`communicationType`、`deviceName`、`lastError`、`errorCode`、`errorArg1`、`errorArg2`、`commError`、`commErrorCode`、`commErrorArg1`、`commErrorArg2`、`autostart`、`timestamp`（epoch ms）。
+
+- `lastError*` 是**采样线程**的异常（温度/转速读取失败）；
+- `commError*` 是**通信线程**的异常（BLE/串口连不上、写入失败），链路恢复时清空；
+- `autostart` 是计划任务的实际状态，界面不自行猜测（托盘里也能改，改完广播 `state`）。
 
 ### 错误码
 
@@ -52,6 +60,7 @@
 | `ipc.` | `badJson`、`unknownCommand`、`missingKey`、`missingValue`、`missingPoints`、`badPoint` | `unknownCommand` 的 arg1 是命令名 |
 | `config.` | `unknownKey`、`curveTooFew`、`curveFlat`、`enum`、`notString`、`notBool`、`rangeInt`、`rangeNumber`、`applyFailed` | `unknownKey` arg1=键名；`enum` arg1=类型名；`range*` arg1=下限、arg2=上限；`applyFailed` arg1=异常信息 |
 | `runtime.` | `samplingFailed` | arg1=异常信息（采样线程未归类的异常） |
+| `comm.` | `failed` | arg1=异常信息（通信线程未归类的异常） |
 | `ble.` | `notConfigured`、`deviceNotFound`、`deviceNotFoundByMac`、`nusServiceMissing`、`nusServiceMissingFor`、`nusCharacteristicMissing`、`notConnected`、`timeout`、`gattUnavailable`、`openFailed`、`writeFailed` | `deviceNotFound*` arg1=设备名/MAC；`timeout` arg1=秒；`openFailed` arg1=Win32 码；`writeFailed` arg1=HRESULT |
 | `com.` | `openTimeout`、`noHandshake`、`notConnected` | arg1=COM 口 |
 | `curve.` / `runtimeCurve.` | `empty`、`notIncreasing` | — |

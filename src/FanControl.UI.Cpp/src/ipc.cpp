@@ -305,7 +305,12 @@ void FillState(const JValue& node, State& state) {
     state.errorCode = Str(node.Get("errorCode"));
     state.errorArg1 = Str(node.Get("errorArg1"));
     state.errorArg2 = Str(node.Get("errorArg2"));
+    state.commError = Str(node.Get("commError"));
+    state.commErrorCode = Str(node.Get("commErrorCode"));
+    state.commErrorArg1 = Str(node.Get("commErrorArg1"));
+    state.commErrorArg2 = Str(node.Get("commErrorArg2"));
     state.connected = Bool(node.Get("connected"));
+    state.autostart = Bool(node.Get("autostart"));
     state.timestamp = static_cast<long long>(Num(node.Get("timestamp")));
 }
 
@@ -387,11 +392,17 @@ bool IpcClient::Connect(int timeoutMs) {
     Close();
     const ULONGLONG deadline = GetTickCount64() + static_cast<ULONGLONG>(timeoutMs < 0 ? 0 : timeoutMs);
     for (;;) {
+        // SECURITY_SQOS_PRESENT + SECURITY_IDENTIFICATION：命名管道默认要 impersonation 级，
+        // 受限令牌（标准用户、低完整性）下会被拒绝（ERROR_ACCESS_DENIED）。声明只允许服务端
+        // 识别客户端身份，既放行连接，也避免守护进程拿到可冒用令牌。
         HANDLE pipe = CreateFileW(kPipeName, GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
-                                  FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED, nullptr);
+                                  FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT |
+                                      SECURITY_IDENTIFICATION,
+                                  nullptr);
         if (pipe != INVALID_HANDLE_VALUE) {
             pipe_ = pipe;
-            ioEvent_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+            readEvent_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+            writeEvent_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
             return true;
         }
         if (timeoutMs >= 0 && GetTickCount64() >= deadline) return false;
@@ -405,9 +416,13 @@ void IpcClient::Close() {
         CloseHandle(static_cast<HANDLE>(pipe_));
         pipe_ = nullptr;
     }
-    if (ioEvent_ != nullptr) {
-        CloseHandle(static_cast<HANDLE>(ioEvent_));
-        ioEvent_ = nullptr;
+    if (readEvent_ != nullptr) {
+        CloseHandle(static_cast<HANDLE>(readEvent_));
+        readEvent_ = nullptr;
+    }
+    if (writeEvent_ != nullptr) {
+        CloseHandle(static_cast<HANDLE>(writeEvent_));
+        writeEvent_ = nullptr;
     }
 }
 
@@ -415,7 +430,7 @@ bool IpcClient::ReadMessage(int timeoutMs, Message& message) {
     if (pipe_ == nullptr) return false;
     HANDLE pipe = static_cast<HANDLE>(pipe_);
 
-    HANDLE ioEvent = static_cast<HANDLE>(ioEvent_);
+    HANDLE ioEvent = static_cast<HANDLE>(readEvent_);
     const DWORD headerTimeout = timeoutMs < 0 ? INFINITE : static_cast<DWORD>(timeoutMs);
 
     unsigned char header[4] = {};
@@ -443,6 +458,38 @@ bool IpcClient::ReadMessage(int timeoutMs, Message& message) {
         FillState(*state, message.state);
         message.hasState = true;
     }
+    if (const JValue* autostart = root.Get("autostart")) {
+        message.autostart = Bool(autostart);
+        message.hasAutostart = true;
+    }
+
+    // 设备/端口/GPU 候选列表：三种事件形状不同，这里统一折成 label/value
+    if (message.event == L"bleDevices") {
+        if (const JValue* devices = root.Get("devices"); devices && devices->kind == JValue::Arr) {
+            for (const auto& item : devices->arr) {
+                if (item.kind != JValue::Obj) continue;
+                DialogItem entry;
+                entry.value = Str(item.Get("mac"));
+                entry.label = Str(item.Get("name"));
+                if (entry.label.empty()) entry.label = entry.value;
+                if (entry.value.empty()) continue;
+                message.items.push_back(entry);
+            }
+            message.hasItems = true;
+        }
+    } else if (message.event == L"ports" || message.event == L"gpus") {
+        const char* key = message.event == L"ports" ? "ports" : "gpus";
+        if (const JValue* list = root.Get(key); list && list->kind == JValue::Arr) {
+            for (const auto& item : list->arr) {
+                if (item.kind != JValue::Str) continue;
+                DialogItem entry;
+                entry.label = Utf8ToWide(item.str);
+                entry.value = entry.label;
+                message.items.push_back(entry);
+            }
+            message.hasItems = true;
+        }
+    }
     return true;
 }
 
@@ -454,7 +501,7 @@ bool IpcClient::Send(const std::string& json) {
                                static_cast<unsigned char>((length >> 8) & 0xFF),
                                static_cast<unsigned char>((length >> 16) & 0xFF),
                                static_cast<unsigned char>((length >> 24) & 0xFF)};
-    HANDLE ioEvent = static_cast<HANDLE>(ioEvent_);
+    HANDLE ioEvent = static_cast<HANDLE>(writeEvent_);
     if (!WriteExact(pipe, ioEvent, header, 4, 2000)) return false;
     return WriteExact(pipe, ioEvent, json.data(), length, 2000);
 }
@@ -480,5 +527,15 @@ bool IpcClient::SetCurve(const std::vector<CurvePoint>& points, bool rpmCurve) {
 bool IpcClient::RequestReconnect() { return Send("{\"cmd\":\"reconnect\"}"); }
 
 bool IpcClient::RequestState() { return Send("{\"cmd\":\"getState\"}"); }
+
+bool IpcClient::ScanBleDevices() { return Send("{\"cmd\":\"scanBle\"}"); }
+
+bool IpcClient::ListPorts() { return Send("{\"cmd\":\"listPorts\"}"); }
+
+bool IpcClient::ListGpus() { return Send("{\"cmd\":\"listGpus\"}"); }
+
+bool IpcClient::SetAutostart(bool enabled) {
+    return Send(std::string("{\"cmd\":\"setAutostart\",\"value\":") + (enabled ? "true" : "false") + "}");
+}
 
 }  // namespace fc

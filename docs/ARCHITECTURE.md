@@ -81,6 +81,7 @@ FanControl.Host.exe (管理员, 常驻)          FanControl.UI.exe (普通权限
 - 设备侧（ESP32）：BLE（Nordic UART Service）或串口，载荷都是一行 ASCII 文本，详见 [PROTOCOL.md](PROTOCOL.md)。
 - BLE 走 Win32 `bluetoothleapis`（`BluetoothGATT*`）+ SetupAPI 枚举设备接口，**不依赖 WinRT 投影**；因此工程的 TFM 是 `net8.0-windows` 而不是 `net8.0-windows10.0.19041.0`。
 - 托盘用 `Shell_NotifyIcon` + `TrackPopupMenuEx`（P/Invoke），**不依赖 WinForms**。
+- 界面不直接碰设备与注册表：蓝牙设备列表、串口列表、显卡列表分别由后台的 `scanBle` / `listPorts` / `listGpus` 命令返回，开机自启由 `setAutostart` 写入计划任务（`schtasks /TN FanControl`）——这些都要管理员权限，只能待在后台进程。
 
 ## PWM 平滑
 

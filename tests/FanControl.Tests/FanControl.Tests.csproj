@@ -19,6 +19,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\FanControl.Shared\FanControl.Shared.csproj" />
     <ProjectReference Include="..\..\src\FanControl.Service\FanControl.Service.csproj" />
+    <ProjectReference Include="..\..\src\FanControl.Host\FanControl.Host.csproj" />
   </ItemGroup>
 
   <ItemGroup>

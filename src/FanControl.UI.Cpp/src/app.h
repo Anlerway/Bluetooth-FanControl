@@ -10,6 +10,8 @@
 #include <vector>
 #include <deque>
 #include <utility>
+#include <unordered_map>
+#include <algorithm>
 #include <cmath>
 #include <cstdint>
 #include <memory>
@@ -44,6 +46,10 @@ struct Snapshot {
     std::wstring errorCode;
     std::wstring errorArg1;
     std::wstring errorArg2;
+    std::wstring commError;
+    std::wstring commErrorCode;
+    std::wstring commErrorArg1;
+    std::wstring commErrorArg2;
 };
 
 enum class Page { Dashboard = 0, Settings, Curve, About };
@@ -96,6 +102,13 @@ private:
     void DrawCurve(float x, float y, float w);
     void DrawAbout(float x, float y, float w);
 
+    // 设备/端口/GPU 选择弹窗（立即模式，列表项由后台推送）
+    enum class Dialog { None, BleDevices, Ports, Gpus };
+    void DrawDialog(float w, float h);
+    void OpenDialog(Dialog kind);
+    void CloseDialog();
+    void SelectDialogItem(int index);
+
     // widgets
     float Card(float x, float y, float w, const std::wstring& title, float height);
     void RowButton(float x, float y, float w, float h, const std::wstring& id, const std::wstring& title,
@@ -103,7 +116,17 @@ private:
     void RowToggle(float x, float y, float w, float h, const std::wstring& id, const std::wstring& title,
                    const std::wstring& subtitle, bool on);
     void RowSlider(float x, float y, float w, float h, const std::wstring& id, const std::wstring& title,
-                   const std::wstring& subtitle, int value, int lo, int hi);
+                   const std::wstring& subtitle, int value, int lo, int hi, const wchar_t* unit = L" ms");
+    // 滑块几何：立即模式绘制时记下轨道位置，点击时按 x 反算取值（点哪里就是多少，而不是循环跳档）。
+    struct SliderGeom {
+        float trackL = 0;
+        float trackR = 0;
+        int lo = 0;
+        int hi = 100;
+    };
+    int SliderValueAt(const std::wstring& id, int clickX, int fallback) const;
+    std::unordered_map<std::wstring, SliderGeom> sliders_;
+
     void Switch(float x, float y, bool on);
     void Chip(float x, float y, float w, float h, const std::wstring& text, bool accent,
               const std::wstring& id = L"");
@@ -145,11 +168,19 @@ private:
     double t_ = 0.0;
 
     std::vector<Point2> curve_;
+    std::vector<Point2> rpmCurve_;
+    int curveTab_ = 0;  // 0=温度曲线 1=转速曲线
     D2D1_RECT_F curvePlot_{};
     int dragIndex_ = -1;
     int smoothMs_ = 800;
-    bool autostart_ = true;
+    bool autostart_ = false;
     bool notify_ = true;
+
+    Dialog dialog_ = Dialog::None;
+    bool dialogBusy_ = false;
+    std::vector<std::pair<std::wstring, std::wstring>> dialogItems_;
+    int dialogScroll_ = 0;
+    std::wstring dialogTitle_;
     std::wstring toast_;
     DWORD toastUntil_ = 0;
 
@@ -164,6 +195,10 @@ private:
     std::wstring ThemeLabel() const;
     std::wstring UnitLabel() const;
     std::wstring LangLabel() const;
+    std::wstring ModeLabel(const std::wstring& mode) const;
+    std::wstring DeviceLabel() const;
+    void SendString(const char* key, const std::wstring& value);
+    void SendAutostart(bool enabled);
 
     std::unique_ptr<fc::IpcClient> ipc_;
     std::thread ipcThread_;
