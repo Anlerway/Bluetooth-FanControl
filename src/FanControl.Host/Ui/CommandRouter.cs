@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO.Ports;
 using System.Net;
 using System.Net.Http;
@@ -31,6 +32,8 @@ internal sealed class CommandRouter : IAsyncDisposable
     private readonly FanControlRuntime _runtime;
     private readonly SystemSettings _system;
     private readonly ILogger _logger;
+    // 界面「运行日志」页：内存缓冲 + 当前日志目录（目录跟着数据位置走，用 _system.LogDirectory 现取）
+    private readonly LogFeed _feed;
     private readonly CancellationTokenSource _cts = new();
 
     // 界面一条动作可能拆成几条命令（例如选蓝牙设备 = set mac + set name），
@@ -50,12 +53,16 @@ internal sealed class CommandRouter : IAsyncDisposable
     private string? _lastSignature;
     private long _lastPushTicks;
     private long _lastCollectTicks = Environment.TickCount64;
+    // 第一次运行还没写 system.json：界面弹出欢迎向导，选完语言与数据目录后置 false
+    private bool _firstRun;
 
-    public CommandRouter(FanControlRuntime runtime, SystemSettings system, ILogger logger)
+    public CommandRouter(FanControlRuntime runtime, SystemSettings system, ILogger logger, LogFeed feed, bool firstRun)
     {
         _runtime = runtime;
         _system = system;
         _logger = logger;
+        _feed = feed;
+        _firstRun = firstRun;
     }
 
     public void Start()
@@ -67,7 +74,7 @@ internal sealed class CommandRouter : IAsyncDisposable
     }
 
     /// <summary>界面刚打开时先给一帧完整快照。</summary>
-    public void PushSnapshot() => Send(StateJson.BuildState(_runtime, _autostart, _system.Current));
+    public void PushSnapshot() => Send(StateJson.BuildState(_runtime, _autostart, _system.Current, _firstRun));
 
     private async Task PushLoopAsync(CancellationToken cancellationToken)
     {
@@ -94,7 +101,7 @@ internal sealed class CommandRouter : IAsyncDisposable
                 continue;
             }
 
-            var json = StateJson.BuildState(_runtime, _autostart, _system.Current);
+            var json = StateJson.BuildState(_runtime, _autostart, _system.Current, _firstRun);
             var signature = Signature(json);
             var now = Environment.TickCount64;
             if (signature == _lastSignature && now - _lastPushTicks < HeartbeatMilliseconds)
@@ -161,7 +168,7 @@ internal sealed class CommandRouter : IAsyncDisposable
                     break;
 
                 case "getState":
-                    Send(StateJson.BuildState(_runtime, _autostart, _system.Current));
+                    Send(StateJson.BuildState(_runtime, _autostart, _system.Current, _firstRun));
                     break;
 
                 case "set":
@@ -206,9 +213,31 @@ internal sealed class CommandRouter : IAsyncDisposable
                     await HandleSetSystemAsync(root).ConfigureAwait(false);
                     break;
 
+                case "setDataLocation":
+                    await HandleSetDataLocationAsync(root).ConfigureAwait(false);
+                    break;
+
+                case "completeSetup":
+                    await HandleCompleteSetupAsync(root).ConfigureAwait(false);
+                    break;
+
                 case "checkUpdate":
                     // 网络请求不能占住界面线程的回调（回调本身已经在线程池上，这里再放走一层）
                     _ = CheckUpdateAsync();
+                    break;
+
+                case "getLogs":
+                    SendLogs(root);
+                    break;
+
+                case "clearLogs":
+                    // 只清内存缓冲：磁盘上的日志文件留给用户自己看
+                    _feed.Clear();
+                    Send(Reply(new { @event = "ok", cmd = "clearLogs" }));
+                    break;
+
+                case "openLogs":
+                    OpenLogDirectory();
                     break;
 
                 case "uiClosed":
@@ -325,7 +354,7 @@ internal sealed class CommandRouter : IAsyncDisposable
             return;
         }
 
-        Send(StateJson.BuildState(_runtime, _autostart, _system.Current));
+        Send(StateJson.BuildState(_runtime, _autostart, _system.Current, _firstRun));
         Send(Reply(new { @event = "ok", cmd = "setAutostart", autostart = _autostart }));
     }
 
@@ -352,8 +381,82 @@ internal sealed class CommandRouter : IAsyncDisposable
             return;
         }
 
-        Send(StateJson.BuildState(_runtime, _autostart, _system.Current));
+        Send(StateJson.BuildState(_runtime, _autostart, _system.Current, _firstRun));
         Send(Reply(new { @event = "ok", cmd = "setSystem" }));
+    }
+
+    /// <summary>设置页「数据目录」：location 是 AppData / ExeDirectory / Custom，Custom 必须带绝对路径。</summary>
+    private async Task HandleSetDataLocationAsync(JsonElement root)
+    {
+        var location = root.TryGetProperty("location", out var locationElement) && locationElement.ValueKind == JsonValueKind.String
+            ? locationElement.GetString()
+            : null;
+        var path = root.TryGetProperty("path", out var pathElement) && pathElement.ValueKind == JsonValueKind.String
+            ? pathElement.GetString()
+            : null;
+
+        if (string.IsNullOrWhiteSpace(location))
+        {
+            Send(Error(ErrorInfo.Of("ipc.missingValue", "缺少 location。")));
+            return;
+        }
+
+        var error = await _system.SetDataLocationAsync(location, path).ConfigureAwait(false);
+        if (error is not null)
+        {
+            LogRejection(error);
+            Send(Error(error));
+            return;
+        }
+
+        Send(StateJson.BuildState(_runtime, _autostart, _system.Current, _firstRun));
+        Send(Reply(new
+        {
+            @event = "ok",
+            cmd = "setDataLocation",
+            state = _system.Current.UserDataLocation.ToString(),
+            path = _system.Current.UserDataPath ?? string.Empty,
+        }));
+    }
+
+    /// <summary>首次运行向导：一次把语言与数据目录定下来，然后关掉向导。</summary>
+    private async Task HandleCompleteSetupAsync(JsonElement root)
+    {
+        var language = root.TryGetProperty("language", out var languageElement) && languageElement.ValueKind == JsonValueKind.String
+            ? languageElement.GetString()
+            : null;
+        var location = root.TryGetProperty("location", out var locationElement) && locationElement.ValueKind == JsonValueKind.String
+            ? locationElement.GetString()
+            : null;
+        var path = root.TryGetProperty("path", out var pathElement) && pathElement.ValueKind == JsonValueKind.String
+            ? pathElement.GetString()
+            : null;
+
+        // 先落标记：SetDataLocationAsync 中途会推一次状态，若那时 firstRun 还是 true，界面会把向导又弹一遍
+        var wasFirstRun = _firstRun;
+        _firstRun = false;
+
+        if (!string.IsNullOrWhiteSpace(location))
+        {
+            var error = await _system.SetDataLocationAsync(location, path).ConfigureAwait(false);
+            if (error is not null)
+            {
+                _firstRun = wasFirstRun;
+                LogRejection(error);
+                Send(Error(error));
+                return;
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(language))
+        {
+            // 语言落在 appconfig.json 里（数据目录刚换过去，这里写的就是新位置）
+            await ApplyAsync(_runtime.CurrentConfig with { Language = language }).ConfigureAwait(false);
+        }
+
+        _firstRun = false;
+        Send(StateJson.BuildState(_runtime, _autostart, _system.Current, _firstRun));
+        Send(Reply(new { @event = "ok", cmd = "completeSetup" }));
     }
 
     private static HttpClient CreateHttpClient()
@@ -418,14 +521,61 @@ internal sealed class CommandRouter : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            var info = ErrorInfo.Of("config.applyFailed", "应用配置失败：" + ex.Message, ex.Message);
-            ErrorLog.Write(_logger, info, ex);
-            Send(Error(info));
+            // 落盘失败（目录被挪走/删掉、磁盘满、被杀软占用）只进日志：这类消息是 .NET 的原始异常文本，
+            // 弹给用户也只是「Could not find a part of the path ...」，既看不懂也没法处理。
+            // 界面这边把配置退回真实值，开关不会停在没生效的状态上。
+            _logger.LogWarning(ex, "应用配置失败，已退回当前生效的配置。");
+            Send(StateJson.BuildConfig(_runtime, _autostart, _system.Current, _firstRun));
             return;
         }
 
-        Send(StateJson.BuildConfig(_runtime, _autostart, _system.Current));
+        Send(StateJson.BuildConfig(_runtime, _autostart, _system.Current, _firstRun));
         Send(Reply(new { @event = "ok", cmd = "set" }));
+    }
+
+    /// <summary>界面「运行日志」页：按 since 增量返回，lastSeq 是下次拉取的起点。</summary>
+    private void SendLogs(JsonElement root)
+    {
+        long since = 0;
+        if (root.TryGetProperty("since", out var sinceElement) && sinceElement.ValueKind == JsonValueKind.Number)
+        {
+            sinceElement.TryGetInt64(out since);
+        }
+
+        var entries = _feed.Since(since, 400);
+        Send(JsonSerializer.Serialize(new
+        {
+            @event = "logs",
+            entries = entries.Select(entry => new
+            {
+                seq = entry.Seq,
+                time = entry.Time,
+                level = entry.Level,
+                tag = entry.Tag,
+                category = entry.Category,
+                message = entry.Message,
+            }).ToArray(),
+            lastSeq = _feed.LastSeq,
+        }, ReplyOptions));
+    }
+
+    /// <summary>在资源管理器里打开真正的日志目录（数据目录可能是安装目录，不能写死 %APPDATA%）。</summary>
+    private void OpenLogDirectory()
+    {
+        var logDirectory = _system.LogDirectory;
+        try
+        {
+            Directory.CreateDirectory(logDirectory);
+            Process.Start(new ProcessStartInfo("explorer.exe", $"\"{logDirectory}\"") { UseShellExecute = true });
+            Send(Reply(new { @event = "ok", cmd = "openLogs" }));
+        }
+        catch (Exception ex)
+        {
+            var info = ErrorInfo.Of("system.openLogsFailed", "打开日志目录失败：" + ex.Message, ex.Message)
+                .WithSeverity(ErrorSeverity.Error);
+            ErrorLog.Write(_logger, info, ex);
+            Send(Error(info));
+        }
     }
 
     /// <summary>拒绝一条命令时记日志：验证错误写 [验证错误]，其余按错误码级别写。</summary>

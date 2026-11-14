@@ -31,6 +31,7 @@ public sealed class BleChannel : ICommunicationChannel
     private readonly SemaphoreSlim _writeLock = new(1, 1);
     private BleGattSession? _session;
     private byte[]? _rxCharacteristic;
+    private bool _subscribeWarned;
 
     public BleChannel(IConfigManager configManager, ILogger<BleChannel> logger)
     {
@@ -68,7 +69,9 @@ public sealed class BleChannel : ICommunicationChannel
         }
 
         previous?.Dispose();
-        _logger.LogInformation(
+        // 每次重连都写一条会让日志页在连不上时刷屏：连接细节降到 Debug，
+        // 「链路可用」的信息由 FanControlRuntime 在写入成功时记一次。
+        _logger.LogDebug(
             "BLE 已连接：{Name}（{Mac}），GATT 模块 {Module}",
             result.DisplayName,
             string.IsNullOrWhiteSpace(targetMac) ? "未配置" : targetMac,
@@ -155,7 +158,16 @@ public sealed class BleChannel : ICommunicationChannel
             // 通知内容本实现不使用；订阅失败只记警告，不因此断开（写入通道仍可用）
             if (!session.Subscribe(tx))
             {
-                _logger.LogWarning("{Name} 订阅 TX 通知失败，继续使用写入通道。", displayName);
+                // 每次重连都会走到这里，只在首次提示，后续降到 Debug
+                if (!_subscribeWarned)
+                {
+                    _subscribeWarned = true;
+                    _logger.LogWarning("{Name} 订阅 TX 通知失败，继续使用写入通道。", displayName);
+                }
+                else
+                {
+                    _logger.LogDebug("{Name} 订阅 TX 通知失败（已提示过）。", displayName);
+                }
             }
 
             return (session, rx, displayName);

@@ -2,6 +2,7 @@
 #include "i18n.h"
 #include <dwmapi.h>
 #include <shellapi.h>
+#include <shobjidl.h>  // IFileOpenDialog：首次运行与设置页选数据目录
 #include <winreg.h>
 #include <algorithm>
 #include <cstdarg>
@@ -18,7 +19,8 @@ const wchar_t* PageName(int index) {
     case 0: return fc::T(L"仪表盘");
     case 1: return fc::T(L"设置");
     case 2: return fc::T(L"曲线");
-    default: return fc::T(L"关于");
+    case 3: return fc::T(L"关于");
+    default: return fc::T(L"运行日志");
     }
 }
 
@@ -152,6 +154,8 @@ void App::CreateFormats() {
     make(L"Segoe UI Variable Text", DWRITE_FONT_WEIGHT_NORMAL, 12.0f, &fSmall_);
     make(L"Segoe UI Variable Display", DWRITE_FONT_WEIGHT_SEMI_BOLD, 32.0f, &fBig_);
     make(L"Segoe Fluent Icons", DWRITE_FONT_WEIGHT_NORMAL, 14.0f, &fGlyph_);
+    // 等宽：日志的时间戳要按列对齐；Consolas 每台 Windows 都自带，不必随包分发字体
+    make(L"Consolas", DWRITE_FONT_WEIGHT_NORMAL, 12.0f, &fMono_);
 }
 
 bool App::CreateTarget() {
@@ -513,7 +517,7 @@ void App::DrawSidebar(float w, float h) {
     Text(L"FanControl", D2D1::RectF(20, 18, kSidebarWidth - 20, 48), fH2_, theme_.textPrimary);
 
     float y = 64.0f;
-    for (int i = 0; i < 4; ++i) {
+    for (int i = 0; i < 5; ++i) {
         D2D1_RECT_F item = D2D1::RectF(12, y, kSidebarWidth - 12, y + 36);
         std::wstring id = L"nav:" + std::to_wstring(i);
         bool selected = (static_cast<int>(page_) == i);
@@ -523,7 +527,7 @@ void App::DrawSidebar(float w, float h) {
         } else if (Hovered(id)) {
             FillRound(item, 4.0f, theme_.navHover);
         }
-        const wchar_t* icons[] = { L"\xE80F", L"\xE713", L"\xE9D2", L"\xE946" };
+        const wchar_t* icons[] = { L"\xE80F", L"\xE713", L"\xE9D2", L"\xE946", L"\xE81C" };
         Glyph(icons[i], D2D1::RectF(28, y + 8, 48, y + 28), 15.0f, selected ? theme_.textPrimary : theme_.textSecondary);
         Text(PageName(i), D2D1::RectF(56, y + 6, kSidebarWidth - 24, y + 30), fBody_,
              selected ? theme_.textPrimary : theme_.textSecondary);
@@ -750,7 +754,7 @@ void App::DrawSettings(float x, float y, float w) {
     ry += rowH;
     RowToggle(x, ry, w, rowH, L"set:autostart", fc::T(L"开机自启"), fc::T(L"登录后自动启动 FanControl"), autostart_);
     ry += rowH;
-    RowCombo(x, ry, w, rowH, L"set:datadir", fc::T(L"数据目录"), fc::T(L"配置与日志的存放位置（重启后生效）"),
+    RowCombo(x, ry, w, rowH, L"set:datadir", fc::T(L"数据目录"), fc::T(L"配置与日志都放这里，切换时自动搬家"),
              DataDirLabel());
     ry += rowH;
     RowToggle(x, ry, w, rowH, L"set:logenabled", fc::T(L"日志记录"), fc::T(L"把运行日志写入数据目录"), logEnabled_);
@@ -983,6 +987,211 @@ void App::DrawAbout(float x, float y, float w) {
     contentHeight_ = y + 24 - top;
 }
 
+// ---------------- 运行日志页 ----------------
+
+int App::VisibleLogCount() const {
+    if (logFilter_ < 0) return static_cast<int>(logs_.size());
+    int count = 0;
+    for (const fc::LogEntry& entry : logs_) {
+        if (entry.level == logFilter_) ++count;
+    }
+    return count;
+}
+
+void App::AppendLogs(const std::vector<fc::LogEntry>& entries) {
+    // 宿主按 seq 增量给：重连/重复请求都可能把同一批再送一次，靠 seq 去重
+    for (const fc::LogEntry& entry : entries) {
+        if (!logs_.empty() && entry.seq <= logs_.back().seq) continue;
+        logs_.push_back(entry);
+        if (entry.seq > logSeq_) logSeq_ = entry.seq;
+    }
+    while (logs_.size() > 2000) logs_.pop_front();
+    if (logFollow_) logScroll_ = 1e9f;  // DrawLogs 会夹到底部
+}
+
+void App::EnterLogPage() {
+    logNextPoll_ = 0;  // 进页面立刻拉一次，别等下一拍
+}
+
+void App::DrawLogs(float x, float y, float w) {
+    const float rowH = 24.0f;
+    float cx = x;
+    auto filterChip = [&](const wchar_t* label, bool on, const std::wstring& id) {
+        const float cw = std::max(56.0f, MeasureText(label, fSmall_) + 26.0f);
+        Chip(cx, y, cw, 30.0f, label, on, id);
+        cx += cw + 8.0f;
+    };
+    filterChip(fc::T(L"全部"), logFilter_ < 0, L"log:all");
+    const wchar_t* levels[] = { L"提示", L"异常", L"错误", L"验证错误" };
+    for (int i = 0; i < 4; ++i) filterChip(fc::T(levels[i]), logFilter_ == i, L"log:" + std::to_wstring(i));
+    cx += 10.0f;
+    filterChip(logPaused_ ? fc::T(L"继续") : fc::T(L"暂停"), logPaused_, L"log:pause");
+    filterChip(fc::T(L"清空"), false, L"log:clear");
+    filterChip(fc::T(L"打开日志目录"), false, L"log:open");
+
+    const float top = y + 44.0f;
+    const float cardH = std::max(200.0f, std::min(520.0f, viewH_ - top - 64.0f));
+    D2D1_RECT_F card = D2D1::RectF(x, top, x + w, top + cardH);
+    FillRound(card, 8.0f, theme_.cardBg);
+    StrokeRound(card, 8.0f, theme_.cardBorder);
+    logListRect_ = card;
+
+    const int total = VisibleLogCount();
+    const int rows = std::max(1, static_cast<int>((cardH - 16.0f) / rowH));
+    const int maxFirst = std::max(0, total - rows);
+    if (logFollow_) logScroll_ = static_cast<float>(maxFirst);
+    logScroll_ = std::clamp(logScroll_, 0.0f, static_cast<float>(maxFirst));
+    const int first = static_cast<int>(logScroll_);
+
+    rt_->PushAxisAlignedClip(D2D1::RectF(card.left + 1, card.top + 1, card.right - 1, card.bottom - 1),
+                             D2D1_ANTIALIAS_MODE_ALIASED);
+    if (total == 0) {
+        const wchar_t* empty = logPaused_ ? fc::T(L"已暂停") : fc::T(L"暂无日志");
+        TextCentered(empty, D2D1::RectF(card.left, top + cardH * 0.5f - 12.0f, card.right, top + cardH * 0.5f + 12.0f),
+                     fBody_, theme_.textTertiary);
+    } else {
+        int index = 0;
+        int drawn = 0;
+        for (const fc::LogEntry& entry : logs_) {
+            if (logFilter_ >= 0 && entry.level != logFilter_) continue;
+            if (index++ < first) continue;
+            const float ry = top + 8.0f + drawn * rowH;
+            if (ry + rowH > top + cardH) break;
+            Text(entry.time, D2D1::RectF(x + 16.0f, ry + 4.0f, x + 96.0f, ry + rowH), fMono_, theme_.textTertiary);
+            Text(SeverityLabel(entry.level), D2D1::RectF(x + 100.0f, ry + 4.0f, x + 180.0f, ry + rowH), fSmall_,
+                 SeverityColor(theme_, entry.level));
+            Text(entry.message, D2D1::RectF(x + 184.0f, ry + 4.0f, x + w - 28.0f, ry + rowH), fSmall_,
+                 theme_.textPrimary);
+            ++drawn;
+        }
+    }
+    rt_->PopAxisAlignedClip();
+
+    if (total > rows) {  // 细滚动条：只提示当前位置，不做拖拽
+        const float trackTop = top + 8.0f;
+        const float trackH = cardH - 16.0f;
+        const float thumbH = std::max(24.0f, trackH * static_cast<float>(rows) / static_cast<float>(total));
+        const float ratio = maxFirst == 0 ? 0.0f : logScroll_ / static_cast<float>(maxFirst);
+        const float thumbY = trackTop + (trackH - thumbH) * ratio;
+        FillRound(D2D1::RectF(x + w - 9.0f, thumbY, x + w - 4.0f, thumbY + thumbH), 2.5f, theme_.textTertiary);
+    }
+
+    // 底下这行说明：缓冲只在内存里，完整历史在日志文件
+    Text(Fmt(fc::T(L"共 %d 条 · 内存中保留最近 2000 条%s"), total,
+             logPaused_ ? fc::T(L"（已暂停刷新）") : L""),
+         D2D1::RectF(x, top + cardH + 10.0f, x + w, top + cardH + 32.0f), fSmall_, theme_.textTertiary);
+    contentHeight_ = top + cardH + 40.0f - y;
+}
+
+// ---------------- 首次运行向导 ----------------
+
+void App::OpenSetupDialog() {
+    setupOpen_ = true;
+    setupLocation_ = userDataLocation_.empty() ? L"AppData" : userDataLocation_;
+    setupPath_ = userDataPath_;
+    setupLanguage_ = fc::GetLang() == fc::Lang::En ? L"en-US" : L"zh-CN";
+}
+
+void App::PickSetupFolder() {
+    IFileOpenDialog* dialog = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_FileOpenDialog, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&dialog))) ||
+        dialog == nullptr) {
+        return;
+    }
+    DWORD options = 0;
+    if (SUCCEEDED(dialog->GetOptions(&options))) {
+        dialog->SetOptions(options | FOS_PICKFOLDERS | FOS_FORCEFILESYSTEM | FOS_PATHMUSTEXIST);
+    }
+    dialog->SetTitle(fc::T(L"选择配置和日志的存放位置"));
+    if (SUCCEEDED(dialog->Show(hwnd_))) {
+        IShellItem* item = nullptr;
+        if (SUCCEEDED(dialog->GetResult(&item)) && item != nullptr) {
+            PWSTR path = nullptr;
+            if (SUCCEEDED(item->GetDisplayName(SIGDN_FILESYSPATH, &path)) && path != nullptr) {
+                setupPath_ = path;
+                CoTaskMemFree(path);
+            }
+            item->Release();
+        }
+    }
+    dialog->Release();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+void App::FinishSetup() {
+    if (setupLocation_ == L"Custom" && setupPath_.empty()) {
+        PickSetupFolder();  // 还没选过文件夹：先让用户选，别拿着空路径落盘
+        if (setupPath_.empty()) return;
+    }
+    setupOpen_ = false;
+    setupDone_ = true;
+    fc::CompleteSetup(setupLanguage_, setupLocation_, setupLocation_ == L"Custom" ? setupPath_ : std::wstring());
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+void App::DrawSetupDialog(float w, float h) {
+    if (!setupOpen_) return;
+    FillRect(D2D1::RectF(0, 0, w, h), Col(0x000000, 0.5f));
+    const float panelW = std::min(600.0f, w - 80.0f);
+    const float panelH = 428.0f;
+    const float left = (w - panelW) * 0.5f;
+    const float top = std::max(20.0f, (h - panelH) * 0.5f);
+    D2D1_RECT_F panel = D2D1::RectF(left, top, left + panelW, top + panelH);
+    FillRound(panel, 10.0f, theme_.windowBg);
+    StrokeRound(panel, 10.0f, theme_.cardBorder);
+    const float innerLeft = left + 32.0f;
+    const float innerRight = left + panelW - 32.0f;
+
+    Text(fc::T(L"欢迎使用 FanControl"), D2D1::RectF(innerLeft, top + 26, innerRight, top + 60), fH2_,
+         theme_.textPrimary);
+    Text(fc::T(L"先选界面语言，再选配置和日志放在哪里；之后可以在设置页改。"),
+         D2D1::RectF(innerLeft, top + 64, innerRight, top + 88), fSmall_, theme_.textSecondary);
+
+    Text(fc::T(L"语言"), D2D1::RectF(innerLeft, top + 104, innerRight, top + 124), fBodyStrong_, theme_.textPrimary);
+    struct LangChip { const wchar_t* label; const wchar_t* value; };
+    const LangChip langs[] = { { L"中文", L"zh-CN" }, { L"English", L"en-US" } };
+    float chipX = innerLeft;
+    for (const LangChip& lang : langs) {
+        const float cw = std::max(96.0f, MeasureText(lang.label, fBody_) + 36.0f);
+        Chip(chipX, top + 130, cw, 32.0f, lang.label, setupLanguage_ == lang.value,
+             std::wstring(L"setup:lang:") + lang.value);
+        chipX += cw + 10.0f;
+    }
+
+    Text(fc::T(L"配置和日志的存放位置"), D2D1::RectF(innerLeft, top + 182, innerRight, top + 202), fBodyStrong_,
+         theme_.textPrimary);
+    struct LocRow { const wchar_t* value; const wchar_t* title; const wchar_t* hint; };
+    const LocRow rows[] = {
+        { L"AppData", L"应用数据目录", L"%APPDATA%\\FanControl" },
+        { L"ExeDirectory", L"安装目录", L"程序目录下的 Userdata，适合免安装或 U 盘" },
+        { L"Custom", L"自定义文件夹", L"点这里选择一个文件夹" },
+    };
+    float rowY = top + 208;
+    for (const LocRow& row : rows) {
+        const bool selected = setupLocation_ == row.value;
+        D2D1_RECT_F r = D2D1::RectF(innerLeft, rowY, innerRight, rowY + 50);
+        FillRound(r, 6.0f, selected ? theme_.navSelected : theme_.cardBg);
+        if (selected) StrokeRound(r, 6.0f, theme_.accent);
+        // 单选圆点：选中的画实心
+        const float dotX = innerLeft + 16.0f;
+        const float dotY = rowY + 25.0f;
+        FillRound(D2D1::RectF(dotX, dotY - 7, dotX + 14, dotY + 7), 7.0f, selected ? theme_.accent : theme_.cardBorder);
+        if (selected) FillRound(D2D1::RectF(dotX + 4, dotY - 3, dotX + 10, dotY + 3), 3.0f, theme_.windowBg);
+        Text(fc::T(row.title), D2D1::RectF(dotX + 26, rowY + 6, innerRight - 16, rowY + 28), fBody_,
+             theme_.textPrimary);
+        std::wstring hint = fc::T(row.hint);
+        if (row.value[0] == L'C' && selected && !setupPath_.empty()) hint = setupPath_;
+        Text(hint, D2D1::RectF(dotX + 26, rowY + 26, innerRight - 16, rowY + 46), fSmall_, theme_.textTertiary);
+        AddHit(r, std::wstring(L"setup:loc:") + row.value);
+        rowY += 58.0f;
+    }
+
+    const float buttonY = top + panelH - 60.0f;
+    Chip(innerRight - 132, buttonY, 132.0f, 36.0f, fc::T(L"开始使用"), true, L"setup:done");
+    Text(fc::T(L"这些设置之后可以在设置页里改。"), D2D1::RectF(innerLeft, buttonY + 8, innerRight - 148, buttonY + 32),
+         fSmall_, theme_.textTertiary);
+}
+
 // ---------------- 行内下拉（ComboBox） ----------------
 
 namespace {
@@ -1036,6 +1245,9 @@ void App::FillComboItems(const std::wstring& id) {
     } else if (id == L"set:datadir") {
         add(TN(L"应用数据目录"), L"AppData");
         add(TN(L"安装目录"), L"ExeDirectory");
+        // 已经选了自定义目录就把路径当条目名，浮层的勾选才不会落空
+        add(userDataLocation_ == L"Custom" && !userDataPath_.empty() ? userDataPath_ : TN(L"自定义文件夹…"),
+            L"Custom");
     } else if (id == L"set:gpusel") {
         add(TN(L"自动"), L"Auto");
         comboBusy_ = true;
@@ -1229,8 +1441,23 @@ void App::ChooseComboItem(int index) {
         config_.comBaudRate = _wtoi(value.c_str());
         SendValue("comBaudRate", fc::WideToUtf8(value).c_str());
     } else if (id == L"set:datadir") {
-        userDataLocation_ = value;
-        SendSystem("userDataLocation", std::string("\"") + fc::WideToUtf8(value) + "\"");
+        if (value == L"Custom") {
+            const std::wstring previous = setupPath_;
+            setupPath_.clear();
+            PickSetupFolder();  // 复用向导里的文件夹选择器
+            if (setupPath_.empty()) {
+                setupPath_ = previous;
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                return;
+            }
+            userDataLocation_ = L"Custom";
+            userDataPath_ = setupPath_;
+            fc::SetDataLocation(L"Custom", setupPath_);
+        } else {
+            userDataLocation_ = value;
+            userDataPath_.clear();
+            fc::SetDataLocation(value, std::wstring());
+        }
     } else if (id == L"set:gpusel") {
         config_.gpuSelection = value;
         SendString("gpuSelection", value);
@@ -1299,7 +1526,8 @@ void App::Paint() {
     rt_->PushAxisAlignedClip(D2D1::RectF(kSidebarWidth, 0, size.width, clipBottom), D2D1_ANTIALIAS_MODE_ALIASED);
     float top = 28.0f - scroll_;
     const wchar_t* subtitles[] = { fc::T(L"实时温度、转速与趋势"), fc::T(L"外观、硬件来源与控制行为"),
-                                   fc::T(L"温度到输出 PWM 的映射"), fc::T(L"版本与运行信息") };
+                                   fc::T(L"温度到输出 PWM 的映射"), fc::T(L"版本与运行信息"),
+                                   fc::T(L"本次运行的提示、异常与错误") };
     Text(PageName(static_cast<int>(page_)), D2D1::RectF(cx, top, cx + cw, top + 40), fTitle_, theme_.textPrimary);
     Text(subtitles[static_cast<int>(page_)], D2D1::RectF(cx, top + 40, cx + cw, top + 62), fSmall_, theme_.textSecondary);
 
@@ -1309,6 +1537,7 @@ void App::Paint() {
     case Page::Settings: DrawSettings(cx, bodyY, cw); break;
     case Page::Curve: DrawCurve(cx, bodyY, cw); break;
     case Page::About: DrawAbout(cx, bodyY, cw); break;
+    case Page::Log: DrawLogs(cx, bodyY, cw); break;
     }
     rt_->PopAxisAlignedClip();
     pageHeight_[static_cast<int>(page_)] = contentHeight_;
@@ -1317,6 +1546,7 @@ void App::Paint() {
     // 下拉浮层画在内容之上（不裁剪），点击外部由 OnLButtonDown 关掉
     DrawCombo(size.width, size.height);
     DrawBleDialog(size.width, size.height);
+    DrawSetupDialog(size.width, size.height);
 
     if (!toast_.empty() && GetTickCount() < toastUntil_) {
         float tw = 300.0f;
@@ -1415,6 +1645,28 @@ void App::OnMouseLeave() {
 void App::OnLButtonDown(int x, int y) {
     float sx = x / scale_, sy = y / scale_;
 
+    // 首次运行向导最优先：命中只认向导里的控件，点遮罩不穿透也不关
+    if (setupOpen_) {
+        for (auto it = hits_.rbegin(); it != hits_.rend(); ++it) {
+            const D2D1_RECT_F& r = it->rect;
+            if (sx < r.left || sx > r.right || sy < r.top || sy > r.bottom) continue;
+            const std::wstring& id = it->id;
+            if (id == L"chip:setup:done") {
+                FinishSetup();
+            } else if (id.rfind(L"chip:setup:lang:", 0) == 0) {
+                setupLanguage_ = id.substr(16);
+                fc::SetLang(setupLanguage_.rfind(L"en", 0) == 0 ? fc::Lang::En : fc::Lang::Zh);
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            } else if (id.rfind(L"setup:loc:", 0) == 0) {
+                setupLocation_ = id.substr(10);
+                if (setupLocation_ == L"Custom") PickSetupFolder();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            }
+            return;
+        }
+        return;
+    }
+
     // 蓝牙弹窗是模态的：命中只认弹窗自己的控件，点遮罩或别的任何地方都当取消
     if (bleDialogOpen_) {
         for (auto it = hits_.rbegin(); it != hits_.rend(); ++it) {
@@ -1494,6 +1746,7 @@ void App::OnLButtonDown(int x, int y) {
         if (id.rfind(L"nav:", 0) == 0) {
             page_ = static_cast<Page>(_wtoi(id.c_str() + 4));
             scroll_ = 0.0f;
+            if (page_ == Page::Log) EnterLogPage();
             InvalidateRect(hwnd_, nullptr, FALSE);
         } else if (id.rfind(L"set:", 0) == 0) {
             if (IsSliderRow(id)) {
@@ -1533,8 +1786,29 @@ void App::OnLButtonDown(int x, int y) {
                 PushCurveToBackend(curveActive_);
                 InvalidateRect(hwnd_, nullptr, FALSE);
             }
-        } else if (id == L"set:logs" || id == L"chip:logs") {
-            ShellExecuteW(nullptr, L"open", L"explorer.exe", L"%APPDATA%\\FanControl\\Logs", nullptr, SW_SHOWNORMAL);
+        } else if (id == L"set:logs" || id == L"chip:logs" || id == L"chip:log:open") {
+            // 数据目录可以是自定义路径，日志目录只有宿主知道，界面不再自己拼 %APPDATA%
+            fc::OpenLogFolder();
+        } else if (id.rfind(L"chip:log:", 0) == 0) {
+            const std::wstring action = id.substr(9);
+            if (action == L"pause") {
+                logPaused_ = !logPaused_;
+                if (!logPaused_) logNextPoll_ = 0;  // 继续后立刻补拉暂停期间攒下的
+            } else if (action == L"clear") {
+                logs_.clear();
+                logScroll_ = 0.0f;
+                logFollow_ = true;
+                fc::ClearLogs();
+            } else if (action == L"all") {
+                logFilter_ = -1;
+                logScroll_ = 0.0f;
+                logFollow_ = true;
+            } else {
+                logFilter_ = _wtoi(action.c_str());
+                logScroll_ = 0.0f;
+                logFollow_ = true;
+            }
+            InvalidateRect(hwnd_, nullptr, FALSE);
         } else if (id == L"chip:curve:undo") {
             UndoCurve();
         } else if (id == L"chip:release") {
@@ -1590,6 +1864,19 @@ void App::OnMouseWheel(int delta) {
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
+    if (page_ == Page::Log) {  // 日志页自己在列表里翻页，不跟着整页滚
+        const int count = VisibleLogCount();
+        const float listH = std::max(0.0f, logListRect_.bottom - logListRect_.top - 16.0f);
+        const int rows = std::max(1, static_cast<int>(listH / 24.0f));
+        const int maxFirst = std::max(0, count - rows);
+        if (maxFirst > 0) {
+            logFollow_ = false;
+            logScroll_ = std::clamp(logScroll_ - delta / 120.0f * 3.0f, 0.0f, static_cast<float>(maxFirst));
+            if (logScroll_ >= static_cast<float>(maxFirst)) logFollow_ = true;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return;
+        }
+    }
     float visible = std::max(120.0f, viewH_ - 96.0f);
     float maxScroll = std::max(0.0f, pageHeight_[static_cast<int>(page_)] - visible);
     scroll_ -= delta / 120.0f * 70.0f;
@@ -1597,7 +1884,7 @@ void App::OnMouseWheel(int delta) {
 }
 
 void App::SetInitialPage(int index) {
-    if (index >= 0 && index < 4) page_ = static_cast<Page>(index);
+    if (index >= 0 && index < 5) page_ = static_cast<Page>(index);
 }
 
 void App::SetInitialTheme(bool dark) {
@@ -1636,6 +1923,10 @@ void App::OnIpcMessage(void* payload) {
         bleDialogItems_ = message->items;
         bleDialogBusy_ = false;
         bleDialogScroll_ = 0;
+    }
+    if (message->event == L"logs") {
+        if (message->hasLogs) AppendLogs(message->logs);
+        if (message->logLastSeq > logSeq_) logSeq_ = message->logLastSeq;
     }
     if (message->hasItems) {
         // GPU 列表是异步回来的：保留第一项「自动」，再把后台枚举到的卡接上
@@ -1720,6 +2011,16 @@ void App::ApplyState(const fc::State& state) {
     autostart_ = state.autostart;
     logEnabled_ = state.logEnabled;
     userDataLocation_ = state.userDataLocation;
+    userDataPath_ = state.userDataPath;
+    if (state.firstRun && !setupOpen_ && !setupDone_) OpenSetupDialog();
+    // 日志页按 700 ms 增量轮询：state 的 400 ms 节拍不该跟着每帧发命令
+    if (page_ == Page::Log && !logPaused_) {
+        const unsigned long long now = GetTickCount64();
+        if (now >= logNextPoll_) {
+            logNextPoll_ = now + 700;
+            fc::GetLogs(logSeq_);
+        }
+    }
     if (cpuHist_.empty()) {
         // 首次连上后台：用当前值铺满窗口，避免趋势图一开始只有左端一两个点
         for (int i = 0; i < kHistoryPoints; ++i) {
@@ -1800,6 +2101,9 @@ std::wstring App::GpuSourceLabel() const {
 }
 
 std::wstring App::DataDirLabel() const {
+    if (userDataLocation_ == L"Custom") {
+        return userDataPath_.empty() ? fc::T(L"自定义文件夹") : userDataPath_;
+    }
     return userDataLocation_ == L"ExeDirectory" ? fc::T(L"安装目录") : fc::T(L"应用数据目录");
 }
 

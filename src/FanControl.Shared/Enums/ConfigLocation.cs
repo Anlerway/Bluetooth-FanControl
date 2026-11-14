@@ -12,4 +12,10 @@ public enum ConfigLocation
 
     /// <summary>%AppData%\FanControl（用户数据目录）。</summary>
     AppData = 1,
+
+    /// <summary>
+    /// 用户在首次运行向导/设置页里挑的任意文件夹（绝对路径记在 <see cref="Models.SystemConfig.UserDataPath"/>）。
+    /// system.json 本身就住在这个目录里，所以还要靠 %AppData%\FanControl\location.txt 指路。
+    /// </summary>
+    Custom = 2,
 }

@@ -7,6 +7,9 @@ namespace FanControl.Service.Logging;
 public interface ISeverityTag
 {
     string SeverityTag { get; }
+
+    /// <summary>0 提示 / 1 异常 / 2 错误 / 3 验证错误：界面按它上色。</summary>
+    int SeverityValue { get; }
 }
 
 /// <summary>级别中文名：与界面上的四档一一对应（提示 / 异常 / 错误 / 验证错误）。</summary>
@@ -27,6 +30,23 @@ public static class LevelTags
         LogLevel.Warning => "异常",
         LogLevel.Error => "错误",
         _ => "严重",
+    };
+
+    /// <summary>数值版级别，供界面按档位上色（与界面四档一一对应）。</summary>
+    public static int ValueOf(ErrorSeverity severity) => severity switch
+    {
+        ErrorSeverity.Notice => 0,
+        ErrorSeverity.Warning => 1,
+        ErrorSeverity.Validation => 3,
+        _ => 2,
+    };
+
+    public static int ValueOf(LogLevel level) => level switch
+    {
+        LogLevel.Trace or LogLevel.Debug or LogLevel.Information => 0,
+        LogLevel.Warning => 1,
+        LogLevel.Error => 2,
+        _ => 2,
     };
 }
 
@@ -51,6 +71,8 @@ public static class ErrorLog
     private sealed record Entry(ErrorInfo Info, string? Context) : ISeverityTag
     {
         public string SeverityTag => LevelTags.Of(Info.Severity);
+
+        public int SeverityValue => LevelTags.ValueOf(Info.Severity);
 
         public string Text => Context is null
             ? $"{Info.Code}：{Info.Message}"

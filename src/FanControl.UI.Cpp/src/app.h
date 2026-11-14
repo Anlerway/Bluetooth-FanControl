@@ -55,7 +55,7 @@ struct Snapshot {
     int commErrorSeverity = 2;
 };
 
-enum class Page { Dashboard = 0, Settings, Curve, About };
+enum class Page { Dashboard = 0, Settings, Curve, About, Log };
 
 class App {
 public:
@@ -121,6 +121,11 @@ private:
     void RecordCurveUndo();
     void UndoCurve();
     void DrawAbout(float x, float y, float w);
+    // 运行日志页：宿主内存环形缓冲的增量视图（进页面时拉、之后每 700 ms 拉一次）
+    void DrawLogs(float x, float y, float w);
+    void EnterLogPage();
+    void AppendLogs(const std::vector<fc::LogEntry>& entries);
+    int VisibleLogCount() const;
 
     // 行内下拉（1.3.0 里这些字段都是 ComboBox）：点行 → 在行下方浮出列表，不再弹模态窗。
     struct ComboItem { std::wstring label; std::wstring value; };
@@ -138,6 +143,12 @@ private:
     void CloseBleDialog();
     void DrawBleDialog(float w, float h);
     void ChooseBleDevice(int index);  // -1 = 清除当前选择
+
+    // 首次运行向导：语言 + 数据（配置与日志）存放位置，确认后一次性交给宿主
+    void OpenSetupDialog();
+    void DrawSetupDialog(float w, float h);
+    void PickSetupFolder();
+    void FinishSetup();
 
     // widgets
     float Card(float x, float y, float w, const std::wstring& title, float height);
@@ -193,6 +204,7 @@ private:
     IDWriteTextFormat* fSmall_ = nullptr;
     IDWriteTextFormat* fBig_ = nullptr;
     IDWriteTextFormat* fGlyph_ = nullptr;
+    IDWriteTextFormat* fMono_ = nullptr;  // 日志时间列等宽
     std::unordered_map<uint32_t, ID2D1SolidColorBrush*> brushes_;
     std::unordered_map<int, IDWriteTextFormat*> glyphFormats_;
     mutable std::unordered_map<std::wstring, float> measureCache_;
@@ -205,7 +217,7 @@ private:
     Page page_ = Page::Dashboard;
     float scroll_ = 0.0f;
     float contentHeight_ = 0.0f;
-    float pageHeight_[4] = { 0, 0, 0, 0 };
+    float pageHeight_[5] = { 0, 0, 0, 0, 0 };
     float viewH_ = 0.0f;
 
     std::vector<Hit> hits_;
@@ -247,6 +259,22 @@ private:
     // SystemConfig 侧状态
     bool logEnabled_ = true;
     std::wstring userDataLocation_ = L"AppData";
+    std::wstring userDataPath_;
+    // 运行日志页状态
+    std::deque<fc::LogEntry> logs_;
+    long long logSeq_ = 0;
+    int logFilter_ = -1;       // -1 = 全部，其余按级别过滤
+    bool logPaused_ = false;
+    bool logFollow_ = true;    // 停在底部时自动跟着新条目走
+    float logScroll_ = 0.0f;
+    D2D1_RECT_F logListRect_{};
+    unsigned long long logNextPoll_ = 0;
+    // 首次运行向导状态
+    bool setupOpen_ = false;
+    bool setupDone_ = false;  // 本次会话里点过「开始使用」：宿主中途推的旧状态别再弹一次
+    std::wstring setupLocation_ = L"AppData";
+    std::wstring setupPath_;
+    std::wstring setupLanguage_ = L"zh-CN";
     std::wstring toast_;
     int toastSeverity_ = 2;
     DWORD toastUntil_ = 0;

@@ -22,8 +22,11 @@ public static class FanControlServices
         bool logEnabled,
         int maxLogFiles)
     {
-        var fileLogger = new FileLoggerProvider(logDirectory);
+        // 界面「运行日志」页读这份内存缓冲，与文件日志开关无关
+        var logFeed = new LogFeed();
+        var fileLogger = new FileLoggerProvider(logDirectory, logFeed);
         fileLogger.Configure(logDirectory, logEnabled, Math.Max(1, maxLogFiles));
+        services.AddSingleton(logFeed);
         services.AddSingleton(fileLogger);
         services.AddLogging(builder => builder.AddProvider(fileLogger));
 

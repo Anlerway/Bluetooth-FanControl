@@ -68,7 +68,21 @@ struct State {
     // SystemConfig 侧（与 AppConfig 分开存，界面上一组「数据目录 / 日志」就是它）
     bool logEnabled = true;
     std::wstring userDataLocation = L"AppData";
+    // 自定义数据目录（userDataLocation == "Custom" 时有效）
+    std::wstring userDataPath;
+    // 首次运行向导：宿主那边还没有配置就为 true，界面弹一次欢迎面板
+    bool firstRun = false;
     long long timestamp = 0;
+};
+
+// 运行日志页的一条记录：时间是宿主给的 HH:mm:ss.fff，级别 0 提示 / 1 异常 / 2 错误 / 3 验证错误
+struct LogEntry {
+    long long seq = 0;
+    std::wstring time;
+    int level = 0;
+    std::wstring tag;
+    std::wstring category;
+    std::wstring message;
 };
 
 // 弹窗列表的一项：label 显示，value 是回写给后台的取值
@@ -98,6 +112,10 @@ struct Message {
     std::wstring updateTag;
     std::wstring updateUrl;
     std::wstring updateDetail;
+    // 运行日志页：event == "logs" 时带回来的增量条目
+    std::vector<LogEntry> logs;
+    bool hasLogs = false;
+    long long logLastSeq = 0;
 };
 
 // 界面是 FanControl.exe 进程里的一个 DLL（单一进程），没有管道：
@@ -126,6 +144,18 @@ bool SetAutostart(bool enabled);
 bool CheckUpdate();
 /// SystemConfig（日志开关、数据目录）走单独命令，后台会落盘 system.json
 bool SetSystem(const std::string& key, const std::string& valueJson);
+
+/// 运行日志页：拉取 seq 之后的条目（since = 0 表示从头）
+bool GetLogs(long long since);
+/// 清空宿主内存里的日志缓冲（不影响已落盘的日志文件）
+bool ClearLogs();
+/// 在资源管理器里打开宿主真实的日志目录
+bool OpenLogFolder();
+
+/// 数据存放位置切换（location = "AppData" / "ExeDirectory" / "Custom"，path 只在 Custom 时有意义）
+bool SetDataLocation(const std::wstring& location, const std::wstring& path);
+/// 首次运行向导收尾：语言 + 数据位置一次性落盘
+bool CompleteSetup(const std::wstring& language, const std::wstring& location, const std::wstring& path);
 
 /// UTF-8 → UTF-16
 std::wstring Utf8ToWide(const std::string& text);

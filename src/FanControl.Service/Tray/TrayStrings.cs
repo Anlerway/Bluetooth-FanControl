@@ -18,12 +18,14 @@ public static class TrayStrings
     public static string Reconnect => _english ? "Reconnect" : "重建连接";
     public static string Autostart => _english ? "Run at startup" : "开机自启";
     public static string Exit => _english ? "Exit" : "退出";
-    public static string AppTitle => _english ? "Fan control" : "风扇控制";
+    public static string AppTitle => "FanControl";
     public static string Disconnected =>
-        _english ? "Lost the link to the fan controller, reconnecting." : "与风扇控制器的连接已断开，正在尝试重连。";
+        _english ? "Bluetooth connection lost, retrying automatically." : "蓝牙连接已断开，正在按重连轮询自动重试。";
     public static string DisconnectedNoRetry =>
-        _english ? "Lost the link to the fan controller." : "与风扇控制器的连接已断开。";
-    public static string TemperatureErrorTitle => _english ? "Temperature read failed" : "温度读取异常";
+        _english ? "Bluetooth connection lost." : "蓝牙连接已断开。";
+    public static string TemperatureErrorTitle => "FanControl";
+    public static string TemperatureErrorLine(string reason) =>
+        _english ? "Temperature error: " + reason : "温度获取异常：" + reason;
     public static string TemperatureErrorFallback =>
         _english ? "The temperature source is temporarily unavailable." : "温度数据源暂时不可用。";
     public static string AutostartFailed(string reason) =>
@@ -32,7 +34,7 @@ public static class TrayStrings
     public static string State(Shared.Enums.CommunicationState state) => state switch
     {
         Shared.Enums.CommunicationState.Connected => _english ? "Connected" : "已连接",
-        Shared.Enums.CommunicationState.Reconnecting => _english ? "Reconnecting" : "正在重连",
+        Shared.Enums.CommunicationState.Reconnecting => _english ? "Reconnecting" : "重连中",
         _ => _english ? "Waiting" : "等待连接",
     };
 }

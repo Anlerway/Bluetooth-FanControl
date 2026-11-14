@@ -17,14 +17,16 @@ public sealed class FileLoggerProvider : ILoggerProvider
         new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
     private readonly Task _writer;
 
+    private readonly LogFeed? _feed;
     private string _directory;
     private bool _enabled = true;
     private int _maxLogFiles = 20;
     private DateTime _lastPruneUtc = DateTime.MinValue;
 
-    public FileLoggerProvider(string directory)
+    public FileLoggerProvider(string directory, LogFeed? feed = null)
     {
         _directory = directory;
+        _feed = feed;
         Prune();
         _writer = Task.Run(WriteLoopAsync);
     }
@@ -56,15 +58,21 @@ public sealed class FileLoggerProvider : ILoggerProvider
         }
     }
 
-    internal void Write(string category, string tag, string message)
+    internal void Write(string category, string tag, int level, string message)
     {
+        var now = DateTime.Now;
+
+        // 界面里的「运行日志」与写盘开关无关：关掉文件日志也能看当前会话，
+        // 否则用户一关日志，日志页就只剩一片空白，反而更难判断问题。
+        _feed?.Add(now, tag, level, category, message);
+
         if (!Volatile.Read(ref _enabled))
         {
             return;
         }
 
         // 方括号里是中文级别名（提示 / 异常 / 错误 / 验证错误），与界面上的四档一致
-        var line = $"{DateTime.Now:HH:mm:ss.fff} [{tag}] [{category}] {message}{Environment.NewLine}";
+        var line = $"{now:HH:mm:ss.fff} [{tag}] [{category}] {message}{Environment.NewLine}";
 
         // 队列满或已关闭时丢弃：日志不能反过来拖慢采样循环
         _queue.Writer.TryWrite(line);
@@ -208,8 +216,10 @@ public sealed class FileLoggerProvider : ILoggerProvider
             }
 
             // 错误走 ErrorLog 时自带级别标签（验证错误不在 LogLevel 里，只能由状态带过来）
-            var tag = state is ISeverityTag tagged ? tagged.SeverityTag : LevelTags.Of(logLevel);
-            _owner.Write(_category, tag, message);
+            var tagged = state as ISeverityTag;
+            var tag = tagged?.SeverityTag ?? LevelTags.Of(logLevel);
+            var level = tagged?.SeverityValue ?? LevelTags.ValueOf(logLevel);
+            _owner.Write(_category, tag, level, message);
         }
     }
 }

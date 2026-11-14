@@ -8,7 +8,8 @@ namespace FanControl.Service.Config;
 
 /// <summary>
 /// JSON 配置管理器。
-/// - 数据根目录：%AppData%\FanControl（AppData 模式）或 exe 所在目录\Userdata（ExeDirectory 模式）；
+/// - 数据根目录：%AppData%\FanControl（AppData 模式）、exe 所在目录\Userdata（ExeDirectory 模式），
+///   或首次运行向导里挑的任意文件夹（Custom 模式，路径记在 system.json 的 userDataPath）；
 /// - 子目录固定：根目录\Config\（system.json + appconfig.json）、根目录\Logs\（日志）；
 /// - 切换数据位置时，已有 Config\ 与 Logs\ 整体迁移到新根目录，避免数据丢失；
 /// - 写入采用临时文件 + 原子替换，损坏/缺失时回退默认值并记录日志；
@@ -20,6 +21,7 @@ public sealed class ConfigManager : IConfigManager
     private readonly string _installDirectory;
     private readonly string _appDataRoot;   // %AppData%\FanControl（测试可注入）
     private readonly string _exeDataRoot;   // exe 所在目录\Userdata
+    private string? _customRoot;            // location.txt 指向的自定义数据根，没有则为 null
 
     public ConfigManager(
         ILogger<ConfigManager> logger,
@@ -40,6 +42,7 @@ public sealed class ConfigManager : IConfigManager
         }
 
         _exeDataRoot = Path.Combine(_installDirectory, "Userdata");
+        _customRoot = ReadLocationPointer(_appDataRoot);
         NormalizeLegacyLayout();
     }
 
@@ -52,6 +55,15 @@ public sealed class ConfigManager : IConfigManager
     /// <summary>exe 模式数据根目录（exe 所在目录\Userdata）。</summary>
     public string ExeDataRoot => _exeDataRoot;
 
+    /// <summary>自定义数据根（location.txt 指向的目录）；没选过自定义则为 null。</summary>
+    public string? CustomDataRoot => _customRoot;
+
+    /// <summary>自定义数据根的指路文件。system.json 自己住在新目录里，只能靠它找回来。</summary>
+    public string LocationPointerPath => Path.Combine(_appDataRoot, "location.txt");
+
+    /// <summary>还没写过 system.json（首次运行）：界面据此弹一次欢迎向导。</summary>
+    public bool IsFirstRun => !File.Exists(SystemConfigFilePath);
+
     /// <summary>
     /// system.json 定位：优先新布局（根目录\Config\system.json），兼容旧布局（根目录平铺 / data 子目录）。
     /// 不存在时返回默认目标（AppData 根目录\Config\system.json）。
@@ -60,14 +72,7 @@ public sealed class ConfigManager : IConfigManager
     {
         get
         {
-            foreach (var candidate in new[]
-            {
-                Path.Combine(_appDataRoot, "Config", "system.json"),
-                Path.Combine(_exeDataRoot, "Config", "system.json"),
-                Path.Combine(_appDataRoot, "system.json"),
-                Path.Combine(_appDataRoot, "data", "system.json"),
-                Path.Combine(_exeDataRoot, "system.json"),
-            })
+            foreach (var candidate in CandidateSystemConfigPaths())
             {
                 if (File.Exists(candidate))
                 {
@@ -75,15 +80,38 @@ public sealed class ConfigManager : IConfigManager
                 }
             }
 
-            return Path.Combine(_appDataRoot, "Config", "system.json");
+            // 一个都没有：默认写到当前有效的根目录（自定义过就写回那个目录）
+            return Path.Combine(_customRoot ?? _appDataRoot, "Config", "system.json");
         }
     }
 
-    /// <summary>按系统配置解析数据根目录（AppData 或 exe\Userdata）。</summary>
+    private IEnumerable<string> CandidateSystemConfigPaths()
+    {
+        if (_customRoot is not null)
+        {
+            yield return Path.Combine(_customRoot, "Config", "system.json");
+        }
+
+        yield return Path.Combine(_appDataRoot, "Config", "system.json");
+        yield return Path.Combine(_exeDataRoot, "Config", "system.json");
+        yield return Path.Combine(_appDataRoot, "system.json");
+        yield return Path.Combine(_appDataRoot, "data", "system.json");
+        yield return Path.Combine(_exeDataRoot, "system.json");
+    }
+
+    /// <summary>按系统配置解析数据根目录（AppData / exe\Userdata / 自定义）。</summary>
     public string GetDataRoot(SystemConfig systemConfig)
-        => systemConfig.UserDataLocation == ConfigLocation.ExeDirectory
-            ? _exeDataRoot
-            : _appDataRoot;
+        => ResolveRoot(systemConfig.UserDataLocation, systemConfig.UserDataPath);
+
+    /// <summary>把位置模式解析成数据根；自定义但路径不可用时退回 AppData。</summary>
+    public string ResolveRoot(ConfigLocation location, string? customPath)
+        => location switch
+        {
+            ConfigLocation.ExeDirectory => _exeDataRoot,
+            ConfigLocation.Custom when !string.IsNullOrWhiteSpace(customPath) && Path.IsPathFullyQualified(customPath)
+                => customPath.Trim(),
+            _ => _appDataRoot,
+        };
 
     /// <summary>按系统配置解析配置目录（根目录\Config，存放 system.json 与 appconfig.json）。</summary>
     public string GetConfigDirectory(SystemConfig systemConfig)
@@ -117,17 +145,80 @@ public sealed class ConfigManager : IConfigManager
 
     public async Task SaveSystemConfigAsync(SystemConfig config, CancellationToken cancellationToken = default)
     {
-        // 位置变化时，把已有数据（Config\ + Logs\）整体迁移到新的数据根目录，避免丢失。
-        var previous = await LoadSystemConfigAsync(cancellationToken);
-        if (previous.UserDataLocation != config.UserDataLocation)
-        {
-            MigrateDataRoot(previous.UserDataLocation, config.UserDataLocation);
-        }
+        var previous = await LoadSystemConfigAsync(cancellationToken).ConfigureAwait(false);
+        var fromRoot = GetDataRoot(previous);
+        var toRoot = GetDataRoot(config);
 
+        // 顺序有讲究：先写新根目录的 system.json，再写/删指针，最后搬家。
+        // 中间任何一步崩溃，下次启动都还能找到一份能用的 system.json（最多丢日志）。
         await WriteJsonAsync(
             Path.Combine(GetConfigDirectory(config), "system.json"),
             config,
-            cancellationToken);
+            cancellationToken).ConfigureAwait(false);
+        UpdateLocationPointer(config);
+
+        if (!string.Equals(fromRoot, toRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            MigrateDataRoot(fromRoot, toRoot);
+        }
+    }
+
+    /// <summary>
+    /// 维护 %AppData%\FanControl\location.txt：Custom 模式写绝对路径，其余模式删掉。
+    /// 这个文件是唯一无条件可写的位置（AppData），所以指针只能放在这里。
+    /// </summary>
+    private void UpdateLocationPointer(SystemConfig config)
+    {
+        var path = config.UserDataLocation == ConfigLocation.Custom ? config.UserDataPath?.Trim() : null;
+        if (!string.IsNullOrEmpty(path) && Path.IsPathFullyQualified(path))
+        {
+            try
+            {
+                Directory.CreateDirectory(_appDataRoot);
+                File.WriteAllText(LocationPointerPath, path);
+                _customRoot = path;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "写自定义位置指针失败：{Path}", LocationPointerPath);
+            }
+
+            return;
+        }
+
+        try
+        {
+            if (File.Exists(LocationPointerPath))
+            {
+                File.Delete(LocationPointerPath);
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "删除自定义位置指针失败：{Path}", LocationPointerPath);
+        }
+
+        _customRoot = null;
+    }
+
+    private static string? ReadLocationPointer(string appDataRoot)
+    {
+        try
+        {
+            var path = Path.Combine(appDataRoot, "location.txt");
+            if (!File.Exists(path))
+            {
+                return null;
+            }
+
+            var text = File.ReadAllText(path).Trim();
+            // 目录被用户删掉/挪走时指针作废，回落到 AppData，不能把启动卡死
+            return text.Length > 0 && Path.IsPathFullyQualified(text) && Directory.Exists(text) ? text : null;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     public async Task<AppConfig> LoadAppConfigAsync(CancellationToken cancellationToken = default)
@@ -152,15 +243,26 @@ public sealed class ConfigManager : IConfigManager
     public async Task SaveAppConfigAsync(AppConfig config, CancellationToken cancellationToken = default)
     {
         var path = GetAppConfigFilePath(await LoadSystemConfigAsync(cancellationToken));
-        await WriteJsonAsync(path, config, cancellationToken);
+        try
+        {
+            await WriteJsonAsync(path, config, cancellationToken);
+        }
+        catch (DirectoryNotFoundException)
+        {
+            // 数据目录被用户删掉/挪走时先补建，再写一次：配置文件丢了不该让整次设置更改失败
+            var directory = Path.GetDirectoryName(path);
+            if (!string.IsNullOrEmpty(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            await WriteJsonAsync(path, config, cancellationToken);
+        }
     }
 
     /// <summary>切换数据位置：把旧根目录的 Config\ 与 Logs\ 迁移到新根目录。</summary>
-    private void MigrateDataRoot(ConfigLocation from, ConfigLocation to)
+    private void MigrateDataRoot(string fromRoot, string toRoot)
     {
-        var fromRoot = from == ConfigLocation.ExeDirectory ? _exeDataRoot : _appDataRoot;
-        var toRoot = to == ConfigLocation.ExeDirectory ? _exeDataRoot : _appDataRoot;
-
         if (string.Equals(fromRoot, toRoot, StringComparison.OrdinalIgnoreCase))
         {
             return;

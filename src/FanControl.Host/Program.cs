@@ -1,8 +1,10 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using System.Security.Principal;
 using FanControl.Host.Ui;
 using FanControl.Service.Config;
 using FanControl.Service.Host;
+using FanControl.Service.Logging;
 using FanControl.Shared.Contracts;
 using FanControl.Service.Tray;
 using Microsoft.Extensions.DependencyInjection;
@@ -20,6 +22,13 @@ internal static class Program
 {
     private const string MutexName = @"Local\FanControl";
     private const string ShowWindowEventName = @"Local\FanControl.ShowWindow";
+
+    // 界面窗口的类名（src/FanControl.UI.Cpp/src/main.cpp 里 RegisterClassExW 用的名字）。
+    // 启动时先找它：已经开着就直接把窗口叫到前台，不再起第二个进程。
+    private const string UiWindowClass = "FanControlUI";
+
+    // 自拉起管理员权限时附在命令行末尾，防止「拉起后仍不是管理员」时来回重启。
+    private const string ElevationArgument = "--elevated";
 
     // --page=N 让界面第一次打开时停在指定页：截图脚本与自动化测试用，日常启动不带这个参数。
     private static int _initialPage = -1;
@@ -39,6 +48,34 @@ internal static class Program
         // 这样在用户已经开着 FanControl 的机器上也能再起一个实例截图，互不干扰。
         var instanceTag = Environment.GetEnvironmentVariable("FANCONTROL_INSTANCE");
         var suffix = string.IsNullOrWhiteSpace(instanceTag) ? string.Empty : "." + instanceTag.Trim();
+
+        // 开机自启的计划任务由 schtasks 以 /RL HIGHEST 注册，进程本身已经是管理员，不再弹 UAC。
+        var isAutoStart = args.Any(argument =>
+            string.Equals(argument, "--autostart", StringComparison.OrdinalIgnoreCase));
+
+        // 以普通权限启动时自拉起管理员权限：读取 EC/ACPI 传感器与蓝牙 GATT 都需要管理员权限，
+        // 否则程序能开起来却读不到数据，用户只会看到「连不上风扇控制器」。
+        // 顺序照 1.3.0：先提权、再判单实例——低权限进程对高权限窗口调 ShowWindow/SetForegroundWindow
+        // 会被 UIPI 静默拦下，先判单实例就会出现「双击没反应」。
+#if DEBUG
+        // 调试构建允许跳过自拉起：没有 UAC 的自动化环境里要能起界面截图、验证多开拦截
+        var elevationRequired = Environment.GetEnvironmentVariable("FANCONTROL_SKIP_ELEVATION") != "1";
+#else
+        const bool elevationRequired = true;
+#endif
+        if (elevationRequired && !isAutoStart && !IsElevated() && !HasElevationArgument(args))
+        {
+            // 用户取消 UAC 就安静退出（1.3.0 同款行为），不弹「需要管理员权限」的框
+            TryRelaunchElevated(args);
+            return 0;
+        }
+
+        // 已经开着一个实例（界面可见）：把它的窗口叫到前台就退出，不起第二个进程。
+        // 截图脚本用 FANCONTROL_INSTANCE 起多个实例，这时不参与这个判断。
+        if (suffix.Length == 0 && ActivateRunningInstance())
+        {
+            return 0;
+        }
 
         using var mutex = new Mutex(true, MutexName + suffix, out var isFirstInstance);
         if (!isFirstInstance)
@@ -91,7 +128,7 @@ internal static class Program
         {
             if (argument.StartsWith("--page=", StringComparison.OrdinalIgnoreCase)
                 && int.TryParse(argument.AsSpan(7), out var page)
-                && page is >= 0 and <= 3)
+                && page is >= 0 and <= 4)
             {
                 _initialPage = page;
             }
@@ -100,6 +137,8 @@ internal static class Program
         // 日志目录取决于 system.json，所以先用一个最小 ConfigManager 把它读出来，
         // 再按它的结果装配完整的服务容器（与 1.3.0 的启动顺序一致）。
         var earlyConfigManager = new ConfigManager(NullLogger<ConfigManager>.Instance);
+        // 一次都没写过 system.json 就是首次运行：界面据此弹欢迎向导（选语言 + 数据目录）
+        var firstRun = earlyConfigManager.IsFirstRun;
         var systemConfig = await earlyConfigManager.LoadSystemConfigAsync().ConfigureAwait(false);
         var logDirectory = earlyConfigManager.GetLogDirectory(systemConfig);
 
@@ -118,7 +157,21 @@ internal static class Program
         await runtime.StartAsync().ConfigureAwait(false);
 
         var systemSettings = new SystemSettings(earlyConfigManager, systemConfig);
-        await using var router = new CommandRouter(runtime, systemSettings, logger);
+        var logFeed = provider.GetRequiredService<LogFeed>();
+        await using var router = new CommandRouter(runtime, systemSettings, logger, logFeed, firstRun);
+
+        // 数据目录一换，文件日志立刻跟到新目录（SystemSettings 已经落盘，这里只重配 logger）
+        systemSettings.Changed += async (_, _) =>
+        {
+            try
+            {
+                await runtime.SaveSystemConfigAsync(systemSettings.Current).ConfigureAwait(false);
+            }
+            catch (Exception ex)
+            {
+                logger.LogWarning(ex, "切换数据目录后重配日志失败。");
+            }
+        };
 
         // 界面上的动作从这里进来（已经在线程池上），状态由 router 每 400 ms 推回去。
         UiBridge.Initialize(json => _ = Task.Run(() => router.HandleAsync(json)));
@@ -293,21 +346,156 @@ internal static class Program
         }
     }
 
+    /// <summary>托盘提示：与 1.3.0 相同的三行格式（连接方式+状态 / CPU GPU / PWM RPM）。</summary>
     private static void UpdateTray(TrayHost tray, FanControlRuntime runtime)
     {
-        var state = TrayStrings.State(runtime.ConnectionState);
+        var config = runtime.CurrentConfig;
+        var transport = config.CommunicationType == Shared.Enums.CommunicationType.Ble ? "BLE" : "COM";
+        var text = transport + " " + TrayStrings.State(runtime.ConnectionState);
 
         var packet = runtime.LatestPacket;
-        var suffix = packet is null
-            ? string.Empty
-            : $" · {packet.CpuTemperatureCelsius:F0}°C / {packet.PwmPercent:F0}%";
+        if (packet is null)
+        {
+            if (!string.IsNullOrEmpty(runtime.LastError))
+            {
+                text += "\n" + TrayStrings.TemperatureErrorLine(runtime.LastError!);
+            }
+        }
+        else
+        {
+            var unit = config.TemperatureUnit;
+            var cpu = double.IsNaN(packet.CpuTemperatureCelsius)
+                ? "--"
+                : $"{ToDisplayTemperature(packet.CpuTemperatureCelsius, unit):0.0}{TemperatureSuffix(unit)}";
+            var gpu = double.IsNaN(packet.GpuTemperatureCelsius)
+                ? "--"
+                : $"{ToDisplayTemperature(packet.GpuTemperatureCelsius, unit):0.0}{TemperatureSuffix(unit)}";
+            var rpm = packet.FanRpm > 0 ? $"{packet.FanRpm:0} RPM" : "--";
+            var pwm = double.IsNaN(packet.PwmPercent) ? "--" : $"{packet.PwmPercent:0}%";
 
-        tray.SetStatus("FanControl · " + state + suffix);
+            text += $"\nCPU {cpu}  GPU {gpu}\nPWM {pwm}  {rpm}";
+        }
+
+        tray.SetStatus(text);
     }
+
+    /// <summary>摄氏转显示单位（1.3.0 的 TemperatureUnitHelper.ToDisplay）。</summary>
+    private static double ToDisplayTemperature(double celsius, Shared.Enums.TemperatureUnit unit) =>
+        unit == Shared.Enums.TemperatureUnit.Fahrenheit ? celsius * 9.0 / 5.0 + 32.0 : celsius;
+
+    private static string TemperatureSuffix(Shared.Enums.TemperatureUnit unit) =>
+        unit == Shared.Enums.TemperatureUnit.Fahrenheit ? "°F" : "°C";
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern int MessageBoxW(IntPtr hWnd, string lpText, string lpCaption, uint uType);
 
     [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = false)]
     private static extern void SetCurrentProcessExplicitAppUserModelID(string appId);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern IntPtr FindWindowW(string? className, string? windowName);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsWindowVisible(IntPtr hwnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool IsIconic(IntPtr hwnd);
+
+    [DllImport("user32.dll")]
+    private static extern bool ShowWindow(IntPtr hwnd, int showCommand);
+
+    [DllImport("user32.dll")]
+    private static extern bool SetForegroundWindow(IntPtr hwnd);
+
+    private const int SwShow = 5;
+    private const int SwRestore = 9;
+
+    /// <summary>当前进程是否具备管理员权限。</summary>
+    private static bool IsElevated()
+    {
+        using var identity = WindowsIdentity.GetCurrent();
+        return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
+    }
+
+    private static bool HasElevationArgument(string[] args)
+    {
+        foreach (var argument in args)
+        {
+            if (string.Equals(argument, ElevationArgument, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// 用 runas 重新拉起自己（与 1.3.0 一致：Process.Start + UseShellExecute + Verb=runas）；
+    /// 用户拒绝 UAC 时返回 false。
+    /// </summary>
+    private static bool TryRelaunchElevated(string[] args)
+    {
+        var exe = Environment.ProcessPath;
+        if (string.IsNullOrEmpty(exe))
+        {
+            return false;
+        }
+
+        var parts = new List<string>();
+
+        // dotnet FanControl.dll：入口程序集要补回命令行，否则拉起来的只是一个没有参数的 dotnet
+        if (string.Equals(Path.GetFileNameWithoutExtension(exe), "dotnet", StringComparison.OrdinalIgnoreCase))
+        {
+            var entry = Environment.GetCommandLineArgs().FirstOrDefault();
+            if (string.IsNullOrEmpty(entry))
+            {
+                return false;
+            }
+
+            parts.Add(Quote(entry));
+        }
+
+        foreach (var argument in args)
+        {
+            parts.Add(Quote(argument));
+        }
+
+        parts.Add(ElevationArgument);
+
+        var startInfo = new ProcessStartInfo(exe)
+        {
+            UseShellExecute = true,
+            Verb = "runas",
+            Arguments = string.Join(' ', parts),
+            WorkingDirectory = Path.GetDirectoryName(exe) ?? string.Empty,
+        };
+
+        try
+        {
+            using var process = Process.Start(startInfo);
+            return process is not null;
+        }
+        catch (System.ComponentModel.Win32Exception)
+        {
+            // 用户在 UAC 窗口点了「否」，或者系统策略不允许提升
+            return false;
+        }
+    }
+
+    private static string Quote(string value) => value.Contains(' ') ? "\"" + value + "\"" : value;
+
+    /// <summary>已经开着的实例：把它的窗口叫到前台并返回 true。</summary>
+    private static bool ActivateRunningInstance()
+    {
+        var hwnd = FindWindowW(UiWindowClass, null);
+        if (hwnd == IntPtr.Zero || !IsWindowVisible(hwnd))
+        {
+            return false;
+        }
+
+        ShowWindow(hwnd, IsIconic(hwnd) ? SwRestore : SwShow);
+        SetForegroundWindow(hwnd);
+        return true;
+    }
 }

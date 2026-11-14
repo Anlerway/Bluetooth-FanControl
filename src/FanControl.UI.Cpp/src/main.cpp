@@ -157,6 +157,9 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
 extern "C" __declspec(dllexport) int __stdcall FcUiRun(void) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
+    // 首次运行向导与设置页要弹 IFileOpenDialog（COM），窗口线程必须是 STA；
+    // RPC_E_CHANGED_MODE 说明宿主已经初始化过别的套间，这时对话框照样能用，不当作失败。
+    const HRESULT comInit = CoInitializeEx(nullptr, COINIT_APARTMENTTHREADED);
 
     HMODULE module = nullptr;
     GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
@@ -201,6 +204,7 @@ extern "C" __declspec(dllexport) int __stdcall FcUiRun(void) {
         DispatchMessageW(&msg);
     }
     g_hwnd = nullptr;
+    if (SUCCEEDED(comInit)) CoUninitialize();
     return static_cast<int>(msg.wParam);
 }
 
@@ -231,7 +235,7 @@ extern "C" __declspec(dllexport) void __stdcall FcUiSetInitialTheme(int dark) {
     if (dark >= 0) g_app.SetInitialTheme(dark != 0);
 }
 
-/// 宿主启动时告诉界面初始页面（0=仪表盘 1=设置 2=曲线 3=关于）。
+/// 宿主启动时告诉界面初始页面（0=仪表盘 1=设置 2=曲线 3=关于 4=运行日志）。
 extern "C" __declspec(dllexport) void __stdcall FcUiSetInitialPage(int page) {
     g_app.SetInitialPage(page);
 }

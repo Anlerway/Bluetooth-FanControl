@@ -8,6 +8,7 @@
 [Oo]bj/
 # MSVC 中间产物（界面工程直接调 cl）
 src/FanControl.UI.Cpp/build/
+installer/native/build/
 *.obj
 *.res
 build.log

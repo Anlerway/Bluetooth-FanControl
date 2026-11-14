@@ -60,6 +60,10 @@ public sealed class FanControlRuntime : IAsyncDisposable
     private bool _bleLinkVerified;
     // 上次断连通知的时间戳：设备反复连上又掉线时，一分钟内不重复弹
     private long _lastBleNotifyTicks;
+    // 连续重连失败次数：失败越多等得越久，别每 5 秒刷一轮 BLE 扫描和日志
+    private int _reconnectAttempts;
+    // 本次连接是否已经记过「链路可用」：只在真的写出数据时写一条，避免每轮重连刷日志
+    private bool _bleLinkLogged;
 
     public FanControlRuntime(
         AppState appState,
@@ -553,6 +557,7 @@ public sealed class FanControlRuntime : IAsyncDisposable
                 {
                     // 连接成功过、写过数据，这次才算「断开」：连都没连上就失败不弹
                     _bleLinkVerified = false;
+                    _bleLinkLogged = false;
                     RaiseBleDisconnectedOnce();
                 }
 
@@ -568,7 +573,7 @@ public sealed class FanControlRuntime : IAsyncDisposable
 
             var pollInterval = channel.IsConnected
                 ? TimeSpan.FromSeconds(Math.Clamp(config.BlePollIntervalSeconds, 1, 30))
-                : TimeSpan.FromSeconds(Math.Clamp(config.BleReconnectIntervalSeconds, 1, 60));
+                : TimeSpan.FromSeconds(ReconnectDelaySeconds(config));
 
             // 手动重建：断开当前通道并立即重连（不受自动重连开关限制）
             var forceReconnect = _forceReconnect;
@@ -579,6 +584,8 @@ public sealed class FanControlRuntime : IAsyncDisposable
                 await DisconnectChannelsAsync();
                 _bleWasConnected = false;
                 _bleLinkVerified = false;
+                _bleLinkLogged = false;
+                _reconnectAttempts = 0;
                 channel = GetChannel(config.CommunicationType);
             }
 
@@ -590,6 +597,15 @@ public sealed class FanControlRuntime : IAsyncDisposable
                     await channel.SendTimeAsync(DateTime.Now, cancellationToken);
                     // 有一次写入成功，说明链路是真的通的：这条连接断开时才值得通知
                     _bleLinkVerified = true;
+                    _reconnectAttempts = 0;
+                    if (!_bleLinkLogged)
+                    {
+                        _bleLinkLogged = true;
+                        _logger.LogInformation(
+                            "BLE 链路已建立：{Name}（{Mac}），写入正常。",
+                            string.IsNullOrWhiteSpace(config.BleDeviceName) ? "未命名设备" : config.BleDeviceName,
+                            string.IsNullOrWhiteSpace(config.BleDeviceMac) ? "未配置" : config.BleDeviceMac);
+                    }
 
                     if (!float.IsNaN(_latestSmoothedPwm))
                     {
@@ -623,11 +639,17 @@ public sealed class FanControlRuntime : IAsyncDisposable
             {
                 SetConnectionState(CommunicationState.Reconnecting);
                 SetCommError(ex);
+                // 连着失败就退避：5 → 10 → 20 → 40 → 60 秒封顶，成功写回数据后清零
+                if (_reconnectAttempts < 8)
+                {
+                    _reconnectAttempts++;
+                }
 
                 // 写入失败说明链路已经不可用（设备关机、走远、固件重启）：
                 // 不把通道标成断开的话 IsConnected 会一直是 true —— 既不会重连，也永远不会触发断连通知。
                 if (channel.IsConnected)
                 {
+                    _bleLinkLogged = false;
                     try
                     {
                         await channel.DisconnectAsync(cancellationToken).ConfigureAwait(false);
@@ -758,6 +780,8 @@ public sealed class FanControlRuntime : IAsyncDisposable
         await DisconnectChannelsAsync();
         _bleWasConnected = false;
         _bleLinkVerified = false;
+        _bleLinkLogged = false;
+        _reconnectAttempts = 0;
         SetConnectionState(CommunicationState.Waiting);
     }
 
@@ -780,6 +804,14 @@ public sealed class FanControlRuntime : IAsyncDisposable
 
         _comChannel = null;
         _bleChannel = null;
+    }
+
+    /// <summary>未连接时的重试间隔：按连续失败次数翻倍，最长 60 秒。</summary>
+    private int ReconnectDelaySeconds(AppConfig config)
+    {
+        var baseSeconds = Math.Clamp(config.BleReconnectIntervalSeconds, 1, 60);
+        var delay = baseSeconds * (1 << Math.Min(_reconnectAttempts, 4));
+        return Math.Clamp(delay, baseSeconds, 60);
     }
 
     /// <summary>记录通信失败：同一原因只记一次，避免每个重连周期刷日志。</summary>

@@ -5,8 +5,8 @@
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v2">
     <security>
       <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
-        <!-- 读取 EC/ACPI 传感器与蓝牙 GATT 需要管理员权限 -->
-        <requestedExecutionLevel level="requireAdministrator" uiAccess="false" />
+        <!-- 启动时由程序自行请求管理员权限（UAC 提升），避免部分启动方式直接报 740 -->
+        <requestedExecutionLevel level="asInvoker" uiAccess="false" />
       </requestedPrivileges>
     </security>
   </trustInfo>

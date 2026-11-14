@@ -10,8 +10,11 @@ namespace FanControl.Shared.Models;
 /// </summary>
 public sealed record SystemConfig
 {
-    /// <summary>用户数据存放位置（AppData / exe 目录 Userdata），决定 Config\ 与 Logs\ 的归属。</summary>
+    /// <summary>用户数据存放位置（AppData / exe 目录 Userdata / 自定义目录），决定 Config\ 与 Logs\ 的归属。</summary>
     public ConfigLocation UserDataLocation { get; init; } = ConfigLocation.AppData;
+
+    /// <summary>UserDataLocation 为 Custom 时的绝对路径；其余模式为 null。</summary>
+    public string? UserDataPath { get; init; }
 
     // 日志开关
     public bool LogEnabled { get; init; } = true;

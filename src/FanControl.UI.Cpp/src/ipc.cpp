@@ -318,6 +318,8 @@ void FillState(const JValue& node, State& state) {
     state.autostart = Bool(node.Get("autostart"));
     state.logEnabled = Bool(node.Get("logEnabled"), state.logEnabled);
     state.userDataLocation = StrOr(node.Get("userDataLocation"), state.userDataLocation);
+    state.userDataPath = Str(node.Get("userDataPath"));
+    state.firstRun = Bool(node.Get("firstRun"), state.firstRun);
     state.timestamp = static_cast<long long>(Num(node.Get("timestamp")));
 }
 
@@ -343,7 +345,29 @@ std::string WideToUtf8(const std::wstring& text) {
 }
 
 namespace {
+
 CommandSink g_commandSink = nullptr;
+
+// JSON 字符串字面量：自定义目录带反斜杠，必须转义后再拼进命令
+std::string JsonQuoted(const std::wstring& text) {
+    const std::string utf8 = WideToUtf8(text);
+    std::string out = "\"";
+    for (const char c : utf8) {
+        if (c == '\\' || c == '"') {
+            out.push_back('\\');
+            out.push_back(c);
+        } else if (c == '\n') {
+            out += "\\n";
+        } else if (c == '\r') {
+            out += "\\r";
+        } else {
+            out.push_back(c);
+        }
+    }
+    out.push_back('"');
+    return out;
+}
+
 }  // namespace
 
 void SetCommandSink(CommandSink sink) { g_commandSink = sink; }
@@ -378,6 +402,23 @@ bool ParseMessage(const std::string& text, Message& message) {
     if (const JValue* autostart = root.Get("autostart")) {
         message.autostart = Bool(autostart);
         message.hasAutostart = true;
+    }
+    if (message.event == L"logs") {
+        if (const JValue* entries = root.Get("entries"); entries && entries->kind == JValue::Arr) {
+            for (const auto& item : entries->arr) {
+                if (item.kind != JValue::Obj) continue;
+                LogEntry entry;
+                entry.seq = static_cast<long long>(Num(item.Get("seq")));
+                entry.time = Str(item.Get("time"));
+                entry.level = Int(item.Get("level"));
+                entry.tag = Str(item.Get("tag"));
+                entry.category = Str(item.Get("category"));
+                entry.message = Str(item.Get("message"));
+                message.logs.push_back(entry);
+            }
+            message.hasLogs = true;
+        }
+        message.logLastSeq = static_cast<long long>(Num(root.Get("lastSeq")));
     }
     if (message.event == L"update") {
         if (const JValue* state = root.Get("state")) message.updateState = Str(state);
@@ -450,6 +491,26 @@ bool SetSystem(const std::string& key, const std::string& valueJson) {
 }
 
 bool CheckUpdate() { return Send("{\"cmd\":\"checkUpdate\"}"); }
+
+bool GetLogs(long long since) {
+    char buffer[64];
+    std::snprintf(buffer, sizeof(buffer), "{\"cmd\":\"getLogs\",\"since\":%lld}", since);
+    return Send(buffer);
+}
+
+bool ClearLogs() { return Send("{\"cmd\":\"clearLogs\"}"); }
+
+bool OpenLogFolder() { return Send("{\"cmd\":\"openLogs\"}"); }
+
+bool SetDataLocation(const std::wstring& location, const std::wstring& path) {
+    return Send("{\"cmd\":\"setDataLocation\",\"location\":" + JsonQuoted(location) +
+                ",\"path\":" + JsonQuoted(path) + "}");
+}
+
+bool CompleteSetup(const std::wstring& language, const std::wstring& location, const std::wstring& path) {
+    return Send("{\"cmd\":\"completeSetup\",\"language\":" + JsonQuoted(language) +
+                ",\"location\":" + JsonQuoted(location) + ",\"path\":" + JsonQuoted(path) + "}");
+}
 
 bool SetAutostart(bool enabled) {
     return Send(std::string("{\"cmd\":\"setAutostart\",\"value\":") + (enabled ? "true" : "false") + "}");

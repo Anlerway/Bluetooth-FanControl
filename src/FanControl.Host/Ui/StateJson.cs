@@ -18,13 +18,13 @@ internal static class StateJson
     // 中文提示/设备名按 UTF-8 原样输出，避免 \uXXXX 转义（C++ 客户端只做最简 JSON 解析）。
     private static readonly JsonWriterOptions WriterOptions = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
-    public static string BuildState(FanControlRuntime runtime, bool autostart, SystemConfig? system = null)
-        => Build(runtime, includeConfig: true, eventName: "state", autostart: autostart, system: system);
+    public static string BuildState(FanControlRuntime runtime, bool autostart, SystemConfig? system = null, bool firstRun = false)
+        => Build(runtime, includeConfig: true, eventName: "state", autostart: autostart, system: system, firstRun: firstRun);
 
-    public static string BuildConfig(FanControlRuntime runtime, bool autostart, SystemConfig? system = null)
-        => Build(runtime, includeConfig: true, eventName: "config", autostart: autostart, system: system);
+    public static string BuildConfig(FanControlRuntime runtime, bool autostart, SystemConfig? system = null, bool firstRun = false)
+        => Build(runtime, includeConfig: true, eventName: "config", autostart: autostart, system: system, firstRun: firstRun);
 
-    private static string Build(FanControlRuntime runtime, bool includeConfig, string eventName, bool autostart, SystemConfig? system)
+    private static string Build(FanControlRuntime runtime, bool includeConfig, string eventName, bool autostart, SystemConfig? system, bool firstRun)
     {
         var buffer = new ArrayBufferWriter<byte>(1024);
         using (var writer = new Utf8JsonWriter(buffer, WriterOptions))
@@ -39,7 +39,7 @@ internal static class StateJson
             }
 
             writer.WritePropertyName("state");
-            WriteRuntime(writer, runtime, autostart, system);
+            WriteRuntime(writer, runtime, autostart, system, firstRun);
 
             writer.WriteEndObject();
         }
@@ -98,7 +98,7 @@ internal static class StateJson
         writer.WriteEndObject();
     }
 
-    private static void WriteRuntime(Utf8JsonWriter writer, FanControlRuntime runtime, bool autostart, SystemConfig? system)
+    private static void WriteRuntime(Utf8JsonWriter writer, FanControlRuntime runtime, bool autostart, SystemConfig? system, bool firstRun)
     {
         var packet = runtime.LatestPacket;
         var config = runtime.CurrentConfig;
@@ -130,6 +130,9 @@ internal static class StateJson
         writer.WriteBoolean("autostart", autostart);
         writer.WriteBoolean("logEnabled", system?.LogEnabled ?? true);
         writer.WriteString("userDataLocation", (system?.UserDataLocation ?? ConfigLocation.AppData).ToString());
+        writer.WriteString("userDataPath", system?.UserDataPath ?? string.Empty);
+        // 还没写过 system.json：界面据此弹一次欢迎向导（选语言 + 数据目录）
+        writer.WriteBoolean("firstRun", firstRun);
         writer.WriteNumber("timestamp", packet?.Timestamp.ToUnixTimeMilliseconds() ?? 0);
         writer.WriteEndObject();
     }
