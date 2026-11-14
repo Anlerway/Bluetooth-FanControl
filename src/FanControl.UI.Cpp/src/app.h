@@ -71,7 +71,6 @@ public:
     void SetInitialTheme(bool dark);
     void SetInitialPage(int index);
     void OnIpcMessage(void* payload);   // 接管 fc::Message* 的所有权
-    void OnIpcStatus(bool connected);
     bool IsDark() const { return dark_; }
     float DpiScale() const { return scale_; }
 
@@ -142,6 +141,8 @@ private:
     void Switch(float x, float y, bool on);
     void Chip(float x, float y, float w, float h, const std::wstring& text, bool accent,
               const std::wstring& id = L"");
+    // 文本渲染宽度（DIP）。英文标签明显比中文长，固定宽度会溢出，按钮宽度按它算。
+    float MeasureText(const std::wstring& text, IDWriteTextFormat* format) const;
 
     void BuildHistory(float dt);
 
@@ -201,14 +202,11 @@ private:
     std::wstring toast_;
     DWORD toastUntil_ = 0;
 
-    // ---- 与后台守护进程（命名管道）的交互 ----
-    void StartIpc();
-    void StopIpc();
+    // ---- 与后台（同进程内的 C# 侧）的交互 ----
     void SendValue(const char* key, const char* valueJson);
     void ApplyConfig(const fc::Config& config);
     void ApplyState(const fc::State& state);
     void PushCurveToBackend();
-    void StartHostProcess();
     std::wstring ThemeLabel() const;
     std::wstring UnitLabel() const;
     std::wstring LangLabel() const;
@@ -226,13 +224,8 @@ private:
     void SendString(const char* key, const std::wstring& value);
     void SendAutostart(bool enabled);
 
-    std::unique_ptr<fc::IpcClient> ipc_;
-    std::thread ipcThread_;
-    std::atomic<bool> ipcStop_{ false };
     std::atomic<bool> backendUp_{ false };
-    std::mutex sendMutex_;
     fc::Config config_;
     bool hasConfig_ = false;
-    bool launcherTried_ = false;
     long long lastSampleMs_ = 0;
 };

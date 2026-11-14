@@ -22,6 +22,11 @@ jobs:
       - name: Add MSVC to PATH
         uses: ilammy/msvc-dev-cmd@v1
 
+      # 界面是 C++20 + Direct2D，必须最先编：宿主工程会把 FanControl.UI.dll 拷到输出/发布目录
+      # （build.bat 检测到 cl 已在 PATH 就跳过 vcvars）
+      - name: Build UI (C++)
+        run: cmd /c "cd src\FanControl.UI.Cpp && build.bat"
+
       # 还原整个解决方案：测试项目不在主程序的引用链里
       - name: Restore
         run: dotnet restore FanControl.slnx
@@ -32,16 +37,15 @@ jobs:
       - name: Test
         run: dotnet test tests\FanControl.Tests\FanControl.Tests.csproj -c Release --no-restore
 
-      # 界面是 C++20 + Direct2D，用 MSVC 直接编译（build.bat 检测到 cl 已在 PATH 就跳过 vcvars）
-      - name: Build UI (C++)
-        run: cmd /c "cd src\FanControl.UI.Cpp && build.bat"
-
-      # 与本地打包一致：后台以普通目录发布，再把界面 exe 放到同一目录
-      - name: Publish daemon (self-contained)
+      # 单一进程：发布出来是 FanControl.exe + FanControl.UI.dll，由 csproj 的 NativeUiDll 项一起拷过去
+      - name: Publish host (self-contained)
         run: dotnet publish src\FanControl.Host\FanControl.Host.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -p:PublishReadyToRun=false -o artifacts\portable
 
-      - name: Stage UI next to daemon
-        run: copy src\FanControl.UI.Cpp\build\FanControl.UI.exe artifacts\portable\
+      - name: Verify package layout
+        shell: cmd
+        run: |
+          if not exist artifacts\portable\FanControl.exe exit /b 1
+          if not exist artifacts\portable\FanControl.UI.dll exit /b 1
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4

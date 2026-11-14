@@ -1,11 +1,9 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
-using System.Threading;
-using FanControl.Host.Ipc;
+using FanControl.Host.Ui;
 using FanControl.Service.Config;
 using FanControl.Service.Host;
 using FanControl.Service.Tray;
-using FanControl.Shared.Enums;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
@@ -13,22 +11,25 @@ using Microsoft.Extensions.Logging.Abstractions;
 namespace FanControl.Host;
 
 /// <summary>
-/// 常驻守护进程：硬件采样 + 风扇控制 + 托盘 + 命名管道服务端。
-/// 界面（FanControl.UI.exe，C++）按需启动，通过命名管道读状态、下发配置；
-/// 托盘、开机自启、断线重连都属于这里 —— 关掉界面，风扇仍在受控。
+/// 单一进程的 FanControl：硬件采样 + 风扇控制 + 托盘 + 配置落盘都在这里，
+/// 界面是进程内加载的 FanControl.UI.dll（C++/Direct2D），没有命名管道也没有第二个进程。
+/// 关掉窗口只是销毁窗口，托盘与采样继续；托盘菜单「打开主界面」会把窗口重新建出来。
 /// </summary>
 internal static class Program
 {
-    private const string MutexName = @"Local\FanControl.Host";
+    private const string MutexName = @"Local\FanControl";
     private const string ShowWindowEventName = @"Local\FanControl.ShowWindow";
 
     [STAThread]
     private static int Main(string[] args)
     {
+        // 与界面 DLL 中创建的窗口同一个 AppUserModelID：任务栏只有一个按钮。
+        SetCurrentProcessExplicitAppUserModelID("FanControl");
+
         using var mutex = new Mutex(true, MutexName, out var isFirstInstance);
         if (!isFirstInstance)
         {
-            // 已有守护进程在跑：请求它把界面唤到前台，然后退出。
+            // 已经在跑：请现有实例把窗口叫到前台，然后退出。
             if (EventWaitHandle.TryOpenExisting(ShowWindowEventName, out var existing))
             {
                 using (existing)
@@ -40,11 +41,8 @@ internal static class Program
             return 0;
         }
 
-        // 进入命名进程组：界面由本进程拉起后自动继承，守护进程退出时整组结束。
-        ProcessGroup.Join(message => Trace.WriteLine(message));
-
-        // 事件要在耗时初始化之前就创建：启动器（FanControl.exe）可能在守护进程还没就绪时
-        // 就发来“显示界面”的信号，AutoReset 事件会把这次信号保留到界面线程开始等待。
+        // 事件要在耗时初始化之前创建：第二个实例可能在界面还没就绪时就发来信号，
+        // AutoReset 事件会把这次信号保留到界面线程开始等待。
         using var showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowWindowEventName);
 
         try
@@ -54,7 +52,7 @@ internal static class Program
         catch (Exception ex)
         {
             Trace.WriteLine(ex);
-            MessageBoxW(IntPtr.Zero, "FanControl 守护进程启动失败：" + ex.Message, "FanControl", 0x00000010);
+            MessageBoxW(IntPtr.Zero, "FanControl 启动失败：" + ex.Message, "FanControl", 0x00000010);
             return 1;
         }
     }
@@ -62,7 +60,7 @@ internal static class Program
     private static async Task<int> RunAsync(string[] args, EventWaitHandle showEvent)
     {
         // 日志目录取决于 system.json，所以先用一个最小 ConfigManager 把它读出来，
-        // 再按它的结果装配完整的服务容器（与旧版 UI 启动顺序一致）。
+        // 再按它的结果装配完整的服务容器（与 1.3.0 的启动顺序一致）。
         var earlyConfigManager = new ConfigManager(NullLogger<ConfigManager>.Instance);
         var systemConfig = await earlyConfigManager.LoadSystemConfigAsync().ConfigureAwait(false);
         var logDirectory = earlyConfigManager.GetLogDirectory(systemConfig);
@@ -76,13 +74,18 @@ internal static class Program
         var logger = provider.GetRequiredService<ILoggerFactory>().CreateLogger("FanControl.Host");
 
         using var shutdown = new CancellationTokenSource();
-        using var launcher = new UiLauncher(provider.GetRequiredService<ILogger<UiLauncher>>());
         using var tray = new TrayHost();
 
         await runtime.StartAsync().ConfigureAwait(false);
 
+        var systemSettings = new SystemSettings(earlyConfigManager, systemConfig);
+        await using var router = new CommandRouter(runtime, systemSettings, logger);
+
+        // 界面上的动作从这里进来（已经在线程池上），状态由 router 每 400 ms 推回去。
+        UiBridge.Initialize(json => _ = Task.Run(() => router.HandleAsync(json)));
+
         tray.Start(
-            showUi: launcher.Show,
+            showUi: ShowUi,
             exit: () => shutdown.Cancel(),
             reconnect: runtime.RequestReconnect);
 
@@ -113,11 +116,16 @@ internal static class Program
             }
         };
 
-        logger.LogInformation("守护进程已启动，日志目录 {LogDirectory}", logDirectory);
+        logger.LogInformation("FanControl 已启动（单进程），日志目录 {LogDirectory}", logDirectory);
 
-        var systemSettings = new SystemSettings(earlyConfigManager, systemConfig);
-        await using var ipc = new IpcServer(runtime, systemSettings, launcher.Show, logger);
-        ipc.Start();
+        router.Start();
+
+        // --autostart 是计划任务用的：只留托盘，不弹窗口。
+        var autostart = args.Any(argument => string.Equals(argument, "--autostart", StringComparison.OrdinalIgnoreCase));
+        if (!autostart)
+        {
+            ShowUi();
+        }
 
         var showThread = new Thread(() =>
         {
@@ -125,7 +133,7 @@ internal static class Program
             {
                 if (showEvent.WaitOne(500))
                 {
-                    launcher.Show();
+                    ShowUi();
                 }
             }
         })
@@ -143,9 +151,27 @@ internal static class Program
         {
         }
 
-        logger.LogInformation("守护进程退出。");
+        logger.LogInformation("FanControl 退出。");
+
+        // 先关界面（界面线程在 DLL 里跑消息循环），再拆后台服务。
+        UiBridge.Shutdown();
         await runtime.DisposeAsync().ConfigureAwait(false);
         return 0;
+    }
+
+    /// <summary>打开界面：窗口没建过就建，已经开着就唤到前台。托盘与第二个实例都走这里。</summary>
+    private static void ShowUi()
+    {
+        if (!UiBridge.IsAvailable)
+        {
+            MessageBoxW(IntPtr.Zero, "找不到 FanControl.UI.dll，请重新安装。", "FanControl", 0x00000010);
+            return;
+        }
+
+        if (UiBridge.EnsureStarted())
+        {
+            UiBridge.Activate();
+        }
     }
 
     private static void UpdateTray(TrayHost tray, FanControlRuntime runtime)
@@ -162,4 +188,7 @@ internal static class Program
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     private static extern int MessageBoxW(IntPtr hWnd, string lpText, string lpCaption, uint uType);
+
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, PreserveSig = false)]
+    private static extern void SetCurrentProcessExplicitAppUserModelID(string appId);
 }

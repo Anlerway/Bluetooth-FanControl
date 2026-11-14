@@ -1,11 +1,11 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- 常驻守护进程：无界面、开机自启、需要管理员权限（EC / ACPI / BLE 访问）。
-         界面进程 FanControl.UI.exe（C++）按需拉起，两者只通过命名管道通信。 -->
+    <!-- 单一进程：采样、控制、托盘、配置都在这里，界面是进程内加载的 FanControl.UI.dll
+         （C++/Direct2D）。需要管理员权限（EC / ACPI / BLE 访问）。 -->
     <OutputType>WinExe</OutputType>
     <TargetFramework>net8.0-windows</TargetFramework>
-    <AssemblyName>FanControl.Host</AssemblyName>
+    <AssemblyName>FanControl</AssemblyName>
     <RootNamespace>FanControl.Host</RootNamespace>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
@@ -13,8 +13,19 @@
     <Version>1.4.0</Version>
   </PropertyGroup>
 
+  <!-- 界面 DLL 由 src/FanControl.UI.Cpp/build.bat 产出；有就拷到输出目录，没有则跳过
+       （纯后台调试时不需要界面）。 -->
+  <PropertyGroup>
+    <NativeUiDll>$(MSBuildThisFileDirectory)..\FanControl.UI.Cpp\build\FanControl.UI.dll</NativeUiDll>
+  </PropertyGroup>
+
+  <ItemGroup Condition="Exists('$(NativeUiDll)')">
+    <None Include="$(NativeUiDll)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Visible="false" />
+    <None Include="$(MSBuildThisFileDirectory)..\FanControl.UI.Cpp\build\FanControl.UI.lib" CopyToOutputDirectory="PreserveNewest" Visible="false" Condition="Exists('$(MSBuildThisFileDirectory)..\FanControl.UI.Cpp\build\FanControl.UI.lib')" />
+  </ItemGroup>
+
   <ItemGroup>
-    <!-- 测试工程直接覆盖 IPC 层的错误码（ConfigPatch / StateJson 是 internal）。 -->
+    <!-- 测试工程直接覆盖界面协议层（ConfigPatch / StateJson / CommandRouter 是 internal）。 -->
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
       <_Parameter1>FanControl.Tests</_Parameter1>
     </AssemblyAttribute>

@@ -4,7 +4,7 @@ using FanControl.Shared.Contracts;
 using FanControl.Shared.Enums;
 using FanControl.Shared.Models;
 
-namespace FanControl.Host.Ipc;
+namespace FanControl.Host.Ui;
 
 /// <summary>
 /// system.json 的运行期视图（日志开关、数据目录）。这些设置不属于 AppConfig，

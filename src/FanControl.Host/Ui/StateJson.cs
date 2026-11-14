@@ -6,7 +6,7 @@ using FanControl.Service.Host;
 using FanControl.Shared.Enums;
 using FanControl.Shared.Models;
 
-namespace FanControl.Host.Ipc;
+namespace FanControl.Host.Ui;
 
 /// <summary>
 /// 把运行时快照序列化成界面进程消费的 JSON。字段名固定为 camelCase，

@@ -34,7 +34,7 @@
 
 在垃圾研究社开源硬件的基础上，针对实际体验做了完整重制：
 
-- **上位机**：后台守护进程（C#，常驻托盘）+ 原生界面（C++ / Direct2D，Win11 设置风格），新增自动重连、开机自启、控制面板、更多更自由的温度源获取、可调节的温度-风扇曲线；
+- **上位机**：单一进程（C# 宿主，常驻托盘，进程内加载 C++ / Direct2D 原生界面），新增自动重连、开机自启、控制面板、更多更自由的温度源获取、可调节的温度-风扇曲线；
 
 ## 功能特性
 
@@ -76,57 +76,59 @@
 #### 串口（COM）模式（备用）
 1. ESP32设备上电后，点击菜单键，将 `BT Mode` 切换为 `COM`，设备会自动重启并广播 `LAPTOP-FAN-COM` 的蓝牙信号。
 2. 在电脑蓝牙中配对 `LAPTOP-FAN-COM`，系统会生成虚拟 COM 端口。
-3. 打开上位机，通信方式选 **COM**，波特率 `115200`，在「串口端口」里选中对应的 COM 口（列表由后台枚举，插拔后重新点开即可刷新）。
+3. 打开上位机，通信方式选 **COM**，波特率 `115200`，在「串口端口」里选中对应的 COM 口（列表由宿主枚举，插拔后重新点开即可刷新）。
 4. 连接成功后， ESP32端OLED屏幕显示数据
 
 ## 架构
 
-前后台两个进程：
+单一进程，界面是它加载的 DLL：
 
-- **启动器 `FanControl.exe`**（C++，带管理员清单）是唯一用户入口：后台没跑就拉起后台，再唤出界面，整套只弹一次 UAC；
-- **后台 `FanControl.Host.exe`**（C#，需管理员）常驻运行，独占采样循环、PWM 计算、BLE/COM 通信、配置落盘与托盘图标；
-- **界面 `FanControl.UI.exe`**（C++20 + Direct2D/DirectWrite，普通权限）按需启动，通过命名管道 `FanControl.Host.v1` 读状态、下发配置；关掉界面风扇照常受控；
-- 后台与界面在同一个命名进程组（Job Object `Local\FanControl.Group`）：后台退出、崩溃或被结束，界面随组一起关闭，不会留下孤儿窗口。
+- **`FanControl.exe`**（C#，带管理员清单）是唯一的进程：常驻运行，独占采样循环、PWM 计算、BLE/COM 通信、配置落盘与托盘图标；
+- **界面 `FanControl.UI.dll`**（C++20 + Direct2D/DirectWrite）由宿主进程内 `LoadLibrary` 加载，在独立 STA 线程上建窗口；关掉窗口只是销毁它，采样与控风扇照常；
+- 宿主与界面之间没有管道，只剩一次函数调用：宿主每 400 ms 把状态序列化成 JSON 调 `FcUiPush`，界面把命令序列化成 JSON 交给 `FcUiSetCommandSink` 注册的回调（报文格式与 1.4.0 一致）；
+- 只有一个进程，所以不需要启动器，也不会出现孤儿窗口。
 
 ```text
 FanControl.slnx
 ├── src/
-│   ├── FanControl.Shared/    # 共享契约：Enums / Models（配置、数据包）/ IPC 分帧
+│   ├── FanControl.Shared/    # 共享契约：Enums / Models（配置、数据包）/ 错误码
 │   ├── FanControl.Service/   # 类库：采样循环、硬件数据源、通信、配置、日志、托盘
-│   ├── FanControl.Host/      # 后台守护进程（C#，常驻，托盘 + 命名管道服务端）
-│   └── FanControl.UI.Cpp/    # 界面（C++20，Direct2D 自绘，Win11 设置风格）
+│   ├── FanControl.Host/      # 单一进程宿主（C#，产物 FanControl.exe：托盘 + 采样 + 界面桥）
+│   └── FanControl.UI.Cpp/    # 界面（C++20，Direct2D 自绘，编译成 FanControl.UI.dll）
 ├── installer/                # Inno Setup 脚本与一键打包脚本
 ├── tests/FanControl.Tests
-└── docs/                     # 架构、通信协议与进程间协议文档
+└── docs/                     # 架构、通信协议与界面协议文档
 ```
 
 采样链路：`温度数据源（CPU/GPU 独立）→ 控制模式查曲线 → PWM 平滑 → BLE/COM 下发 → OLED 显示`。
 
-状态归属：温度/转速/PWM/连接状态与配置写盘只在后台；界面只管当前页、滚动与曲线草稿。细节见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，管道报文见 [docs/PROTOCOL.md](docs/PROTOCOL.md)。
+状态归属：温度/转速/PWM/连接状态与配置写盘只在宿主；界面只管当前页、滚动与曲线草稿。细节见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)，界面报文见 [docs/PROTOCOL.md](docs/PROTOCOL.md)。
 
 ## 环境配置
 
 ### 上位机
 
 - Windows 10/11 x64；
-- 后台与类库：.NET 8 SDK（8.0.423+）——仅编译源码需要；
+- 宿主与类库：.NET 8 SDK（8.0.423+）——仅编译源码需要；
 - 界面：MSVC（Visual Studio 2026 生成工具或完整版）+ Windows SDK 10，C++20；
 - Inno Setup 6（`D:\APP\Inno Setup 6`，仅打安装包需要）。
 
 ## 构建
 
-前置：.NET 8 SDK（8.0.423+）编译后台；MSVC + Windows SDK 10 编译界面。
+前置：.NET 8 SDK（8.0.423+）编译宿主；MSVC + Windows SDK 10 编译界面。
+
+先编界面，再编宿主（宿主工程会把 `FanControl.UI.dll` 拷到自己的输出目录）：
 
 ```powershell
-# 后台、类库与测试
-dotnet build src\FanControl.Host\FanControl.Host.csproj -c Debug
-dotnet test tests\FanControl.Tests
-
-# 界面（C++）：build.bat 会先 call vcvars64 再调 cl
+# 界面（C++）：build.bat 会先 call vcvars64 再调 cl，产出 build\FanControl.UI.dll
 cd src\FanControl.UI.Cpp
 build.bat
 # 或用 CMake（VS 自带 cmake）
 cmake -B build -S . && cmake --build build --config Release
+
+# 宿主、类库与测试：产物是 bin\Debug\net8.0-windows\FanControl.exe + FanControl.UI.dll
+dotnet build src\FanControl.Host\FanControl.Host.csproj -c Debug
+dotnet test tests\FanControl.Tests
 ```
 
 ### 一键打两个发行版本
@@ -135,7 +137,7 @@ cmake -B build -S . && cmake --build build --config Release
 powershell -NoProfile -ExecutionPolicy Bypass -File installer\_build-release.ps1
 ```
 
-脚本依次：编译 C++ 界面 → `dotnet publish` 后台（两种 flavor）→ 把 `FanControl.UI.exe` 拷进发布目录 → 打 zip → 调 Inno Setup。产物输出到**仓库外**的 `..\..\artifacts\`（可用 `-ReleaseRoot` / `-InstallerRoot` 改）：
+脚本依次：编译 C++ 界面（`build\FanControl.UI.dll`）→ `dotnet publish` 宿主（两种 flavor）→ 把 DLL 拷进发布目录 → 打 zip → 调 Inno Setup。产物输出到**仓库外**的 `..\..\artifacts\`（可用 `-ReleaseRoot` / `-InstallerRoot` 改）：
 
 | 形态 | 自带运行库（免装 .NET） | 需 .NET 8 |
 | --- | --- | --- |
@@ -147,12 +149,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File installer\_build-release.ps1
 
 ## 运行
 
-解压免安装压缩包或安装后运行 `FanControl.exe`（卸载、快捷方式、安装器都指向它；直接运行 `FanControl.UI.exe` 也行，找不到后台会按需提权拉起）：
+解压免安装压缩包或安装后运行 `FanControl.exe`（卸载、快捷方式、安装器都指向它）：
 
 - 界面：仪表盘（实时温度/趋势）、设置、曲线编辑器、关于；
-- 托盘（属于后台进程）：打开主界面 / 重建连接 / 开机自启 / 退出；关掉界面不影响风扇控制；
-- 后台需要管理员权限（访问硬件传感器），开机自启通过任务计划以最高权限静默运行；
-- 三个 exe（`FanControl.exe` / `FanControl.Host.exe` / `FanControl.UI.exe`）必须放在同一目录：启动器从自身目录找后台，界面从自身目录找启动器，后台从自身目录拉起界面。
+- 托盘（同一个进程）：打开主界面 / 重建连接 / 开机自启 / 退出；关掉窗口不影响风扇控制，托盘图标还在；
+- 需要管理员权限（访问硬件传感器），开机自启通过任务计划以最高权限静默运行；
+- `FanControl.exe` 与同目录的 `FanControl.UI.dll` 必须放在一起：找不到 DLL 时宿主只留托盘并弹框提示。
 - 开机自启的计划任务动作是 `<安装目录>\FanControl.exe --autostart`，与 1.3.0 完全一致——从旧版升级后原有自启任务继续有效，无需重设。
 
 ## 数据源说明

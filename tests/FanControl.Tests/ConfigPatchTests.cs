@@ -1,5 +1,5 @@
 using System.Text.Json;
-using FanControl.Host.Ipc;
+using FanControl.Host.Ui;
 using FanControl.Shared.Enums;
 using FanControl.Shared.Models;
 using Xunit;

@@ -1,10 +1,17 @@
+// FanControl.UI.dll：C++/Direct2D 界面，由 FanControl.exe（C# 宿主）在进程内加载。
+// 单一进程：没有命名管道、没有启动器；宿主把状态序列化成 JSON 用 FcUiPush() 推过来，
+// 界面上的操作通过 FcUiSetCommandSink() 注册的回调直接回到宿主。
+
 #include "app.h"
 #include "ipc.h"
+
+#include <dwmapi.h>
 #include <windowsx.h>
+
+#include <algorithm>
 #include <cstdio>
 #include <string>
-#include <dwmapi.h>
-#include <algorithm>
+
 #pragma comment(lib, "d2d1.lib")
 #pragma comment(lib, "dwrite.lib")
 #pragma comment(lib, "dwmapi.lib")
@@ -12,20 +19,9 @@
 #pragma comment(lib, "gdi32.lib")
 
 namespace {
-App g_app;
 
-// 加入守护进程的命名进程组（Local\FanControl.Group）。界面通常由守护进程拉起，
-// 创建时已经自动继承；这里兜住“界面先被单独启动”的情况。
-// 加入后必须立刻关句柄：留着会让 Job 在守护进程退出后依然活着，
-// KILL_ON_JOB_CLOSE 就不会把界面带走。
-void JoinProcessGroup() {
-    HANDLE job = OpenJobObjectW(JOB_OBJECT_ASSIGN_PROCESS, FALSE, L"Local\\FanControl.Group");
-    if (job == nullptr) {
-        return;
-    }
-    AssignProcessToJobObject(job, GetCurrentProcess());
-    CloseHandle(job);
-}
+App g_app;
+HWND g_hwnd = nullptr;
 
 void ApplyWindowStyle(HWND hwnd, bool dark) {
     BOOL useDark = dark ? TRUE : FALSE;
@@ -57,58 +53,6 @@ SIZE SizeWindowForDips(HWND hwnd, int clientW, int clientH) {
     return SIZE{ rc.right - rc.left, rc.bottom - rc.top };
 }
 
-int RunDump(const wchar_t* path) {
-    std::string report;
-    fc::IpcClient client;
-    const bool connected = client.Connect(8000);
-    report += connected ? "connect=ok\n" : "connect=fail\n";
-    fc::Message message;
-    if (connected) {
-        for (int i = 0; i < 4; ++i) {
-            if (!client.ReadMessage(4000, message)) {
-                report += "read=fail\n";
-                break;
-            }
-            char line[256];
-            std::snprintf(line, sizeof(line), "msg%d event=%s state=%d config=%d\n", i,
-                          fc::WideToUtf8(message.event).c_str(), message.hasState ? 1 : 0,
-                          message.hasConfig ? 1 : 0);
-            report += line;
-            if (message.hasState) {
-                const fc::State& s = message.state;
-                std::snprintf(line, sizeof(line), "  cpu=%.1f gpu=%.1f rpm=%.0f pwm=%.0f conn=%s device=%s error=%s\n", s.cpu,
-                              s.gpu, s.rpm, s.pwm, fc::WideToUtf8(s.connectionState).c_str(),
-                              fc::WideToUtf8(s.deviceName).c_str(), fc::WideToUtf8(s.lastError).c_str());
-                report += line;
-            }
-            if (message.hasConfig) {
-                const fc::Config& c = message.config;
-                std::snprintf(line, sizeof(line), "  theme=%s unit=%s poll=%d curve=%zu smoothing=%.1f\n",
-                              fc::WideToUtf8(c.theme).c_str(), fc::WideToUtf8(c.temperatureUnit).c_str(),
-                              c.pollIntervalMilliseconds, c.curve.size(), c.pwmSmoothingWindowSeconds);
-                report += line;
-            }
-        }
-        client.SetValue("theme", "\"System\"");
-        for (int i = 0; i < 4; ++i) {
-            if (!client.ReadMessage(3000, message)) break;
-            if (message.event == L"ok" || message.event == L"error") {
-                report += "reply event=" + fc::WideToUtf8(message.event) +
-                          " message=" + fc::WideToUtf8(message.error) + "\n";
-                break;
-            }
-        }
-        client.Close();
-    }
-    HANDLE file = CreateFileW(path, GENERIC_WRITE, 0, nullptr, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (file != INVALID_HANDLE_VALUE) {
-        DWORD written = 0;
-        WriteFile(file, report.data(), static_cast<DWORD>(report.size()), &written, nullptr);
-        CloseHandle(file);
-    }
-    return connected ? 0 : 2;
-
-}
 LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_CREATE:
@@ -174,8 +118,22 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     case WM_APP + 1:
         g_app.OnIpcMessage(reinterpret_cast<void*>(lp));
         return 0;
-    case WM_APP + 2:
-        g_app.OnIpcStatus(wp != 0);
+    case WM_APP + 9: {  // 宿主推来的状态/配置 JSON
+        std::unique_ptr<std::string> text(static_cast<std::string*>(reinterpret_cast<void*>(lp)));
+        if (text) {
+            auto* message = new fc::Message();
+            if (fc::ParseMessage(*text, *message)) {
+                g_app.OnIpcMessage(message);
+            } else {
+                delete message;
+            }
+        }
+        return 0;
+    }
+    case WM_APP + 8:  // 托盘/第二个实例要求把窗口叫到前台
+        if (IsIconic(hwnd)) ShowWindow(hwnd, SW_RESTORE);
+        SetForegroundWindow(hwnd);
+        InvalidateRect(hwnd, nullptr, FALSE);
         return 0;
     case WM_SETTINGCHANGE:
         InvalidateRect(hwnd, nullptr, FALSE);
@@ -185,69 +143,80 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     }
     return DefWindowProcW(hwnd, msg, wp, lp);
 }
-} // namespace
+}  // namespace
 
-int WINAPI wWinMain(HINSTANCE inst, HINSTANCE, LPWSTR cmdLine, int) {
+// ---- 导出给 C# 宿主的 C ABI ----
+
+extern "C" __declspec(dllexport) int __stdcall FcUiRun(void) {
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
-    JoinProcessGroup();
-    if (cmdLine) {
-        const wchar_t* dumpArg = wcsstr(cmdLine, L"--dump=");
-        if (dumpArg) {
-            wchar_t path[MAX_PATH] = {};
-            wcscpy_s(path, dumpArg + 7);
-            const size_t len = wcslen(path);
-            if (len >= 2 && path[0] == L'"' && path[len - 1] == L'"') {
-                path[len - 1] = L'\0';
-                memmove(path, path + 1, (len - 1) * sizeof(wchar_t));
-            }
-            return RunDump(path);
-        }
-    }
-    // 单实例：已有窗口时激活并退出，避免重复打开
-    HANDLE instance = CreateMutexW(nullptr, TRUE, L"Local\\FanControl.UI");
-    if (instance != nullptr && GetLastError() == ERROR_ALREADY_EXISTS) {
-        if (HWND existing = FindWindowW(L"FanControlUI", nullptr)) {
-            ShowWindow(existing, SW_RESTORE);
-            SetForegroundWindow(existing);
-        }
-        return 0;
-    }
-    if (cmdLine && wcsstr(cmdLine, L"--light")) g_app.SetInitialTheme(false);
-    if (cmdLine && wcsstr(cmdLine, L"--dark")) g_app.SetInitialTheme(true);
-    if (cmdLine) {
-        const wchar_t* pageArg = wcsstr(cmdLine, L"--page=");
-        if (pageArg) g_app.SetInitialPage(_wtoi(pageArg + 7));
-    }
-    // Segoe Fluent Icons 只在 Win11 存在，缺失时由 DirectWrite 回退到 Segoe MDL2 Assets
+
+    HMODULE module = nullptr;
+    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                       reinterpret_cast<LPCWSTR>(&FcUiRun), &module);
+
     WNDCLASSEXW wc{ sizeof(wc) };
     wc.style = CS_HREDRAW | CS_VREDRAW;
     wc.lpfnWndProc = WndProc;
-    wc.hInstance = inst;
+    wc.hInstance = module;
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    wc.hIcon = LoadIconW(inst, L"IDI_ICON1");
+    wc.hIcon = LoadIconW(module, L"IDI_ICON1");
+    if (wc.hIcon == nullptr) wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
     wc.lpszClassName = L"FanControlUI";
-    RegisterClassExW(&wc);
+    if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return 1;
 
-    HWND hwnd = CreateWindowExW(0, wc.lpszClassName, L"FanControl", WS_OVERLAPPEDWINDOW,
-                                CW_USEDEFAULT, CW_USEDEFAULT, 900, 620, nullptr, nullptr, inst, nullptr);
-    if (!hwnd) return 1;
+    g_hwnd = CreateWindowExW(0, wc.lpszClassName, L"FanControl", WS_OVERLAPPEDWINDOW, CW_USEDEFAULT,
+                             CW_USEDEFAULT, 900, 620, nullptr, nullptr, module, nullptr);
+    if (!g_hwnd) return 1;
 
     // 以 DIP 为单位选定客户区尺寸，再换算成物理像素并居中（高 DPI 下不会把布局挤扁）
-    SIZE win = SizeWindowForDips(hwnd, 1120, 740);
+    SIZE win = SizeWindowForDips(g_hwnd, 1120, 740);
     MONITORINFO mi{ sizeof(MONITORINFO) };
-    GetMonitorInfoW(MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY), &mi);
-    int wx = mi.rcWork.left + ((mi.rcWork.right - mi.rcWork.left) - win.cx) / 2;
-    int wy = mi.rcWork.top + ((mi.rcWork.bottom - mi.rcWork.top) - win.cy) / 2;
-    SetWindowPos(hwnd, nullptr, wx, wy, win.cx, win.cy, SWP_NOZORDER | SWP_NOACTIVATE);
+    GetMonitorInfoW(MonitorFromWindow(g_hwnd, MONITOR_DEFAULTTOPRIMARY), &mi);
+    const int wx = mi.rcWork.left + ((mi.rcWork.right - mi.rcWork.left) - win.cx) / 2;
+    const int wy = mi.rcWork.top + ((mi.rcWork.bottom - mi.rcWork.top) - win.cy) / 2;
+    SetWindowPos(g_hwnd, nullptr, wx, wy, win.cx, win.cy, SWP_NOZORDER | SWP_NOACTIVATE);
 
-    ApplyWindowStyle(hwnd, g_app.IsDark());
-    ShowWindow(hwnd, SW_SHOW);
-    UpdateWindow(hwnd);
+    ApplyWindowStyle(g_hwnd, g_app.IsDark());
+    ShowWindow(g_hwnd, SW_SHOW);
+    UpdateWindow(g_hwnd);
 
     MSG msg;
     while (GetMessageW(&msg, nullptr, 0, 0) > 0) {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
+    g_hwnd = nullptr;
     return static_cast<int>(msg.wParam);
+}
+
+/// 把窗口叫到前台（托盘菜单、第二个实例启动时调用）。任意线程可调。
+extern "C" __declspec(dllexport) void __stdcall FcUiActivate(void) {
+    if (g_hwnd) PostMessageW(g_hwnd, WM_APP + 8, 0, 0);
+}
+
+/// 宿主推一帧状态/配置 JSON（与 1.4.0 的管道载荷同形）。任意线程可调，立即返回。
+extern "C" __declspec(dllexport) void __stdcall FcUiPush(const char* utf8Json) {
+    if (g_hwnd == nullptr || utf8Json == nullptr) return;
+    auto* payload = new std::string(utf8Json);
+    if (!PostMessageW(g_hwnd, WM_APP + 9, 0, reinterpret_cast<LPARAM>(payload))) delete payload;
+}
+
+/// 关闭界面（宿主退出时调用）。
+extern "C" __declspec(dllexport) void __stdcall FcUiQuit(void) {
+    if (g_hwnd) PostMessageW(g_hwnd, WM_CLOSE, 0, 0);
+}
+
+/// 注册命令回调：界面上的操作（改配置、重连、扫描设备…）原样回调给宿主。
+extern "C" __declspec(dllexport) void __stdcall FcUiSetCommandSink(fc::CommandSink sink) {
+    fc::SetCommandSink(sink);
+}
+
+/// 宿主启动时告诉界面初始主题（0=浅色 1=深色，-1=跟随系统）。
+extern "C" __declspec(dllexport) void __stdcall FcUiSetInitialTheme(int dark) {
+    if (dark >= 0) g_app.SetInitialTheme(dark != 0);
+}
+
+/// 宿主启动时告诉界面初始页面（0=仪表盘 1=设置 2=曲线 3=关于）。
+extern "C" __declspec(dllexport) void __stdcall FcUiSetInitialPage(int page) {
+    g_app.SetInitialPage(page);
 }

@@ -91,42 +91,30 @@ struct Message {
     bool hasAutostart = false;
 };
 
-/// 与守护进程的命名管道客户端：一帧一个 JSON（4 字节小端长度前缀 + UTF-8）。
-class IpcClient {
-public:
-    IpcClient() = default;
-    ~IpcClient();
+// 界面是 FanControl.exe 进程里的一个 DLL（单一进程），没有管道：
+// 命令直接回调到 C# 端，状态由 C# 端序列化成同一套 JSON 推回来。
+using CommandSink = void (__stdcall*)(const char* utf8Json);
 
-    IpcClient(const IpcClient&) = delete;
-    IpcClient& operator=(const IpcClient&) = delete;
+/// 注册命令回调（进程启动时注册一次，之后不变）。
+void SetCommandSink(CommandSink sink);
+bool HasCommandSink();
 
-    /// 在 timeoutMs 内反复尝试连接，成功返回 true。
-    bool Connect(int timeoutMs);
-    void Close();
-    bool IsOpen() const { return pipe_ != nullptr; }
+/// 发一条命令给后台（单进程下就是一次函数调用）。
+bool Send(const std::string& json);
 
-    /// 读取一帧；timeoutMs < 0 表示一直阻塞到有数据。
-    bool ReadMessage(int timeoutMs, Message& message);
-    bool Send(const std::string& json);
+/// 解析后台推来的 JSON 帧（与 1.4.0 管道帧的载荷同形）。
+bool ParseMessage(const std::string& text, Message& message);
 
-    bool SetValue(const std::string& key, const std::string& valueJson);
-    bool SetCurve(const std::vector<CurvePoint>& points, bool rpmCurve);
-    bool RequestReconnect();
-    bool RequestState();
-    bool ScanBleDevices();
-    bool ListPorts();
-    bool ListGpus();
-    bool SetAutostart(bool enabled);
-    /// SystemConfig（日志开关、数据目录）走单独命令，后台会落盘 system.json
-    bool SetSystem(const std::string& key, const std::string& valueJson);
-
-private:
-    void* pipe_ = nullptr;
-    // 读线程和界面线程会同时做重叠 IO；共用一个事件会让两边的等待互相串信，
-    // 所以读写各用一个事件。
-    void* readEvent_ = nullptr;
-    void* writeEvent_ = nullptr;
-};
+bool SetValue(const std::string& key, const std::string& valueJson);
+bool SetCurve(const std::vector<CurvePoint>& points, bool rpmCurve);
+bool RequestReconnect();
+bool RequestState();
+bool ScanBleDevices();
+bool ListPorts();
+bool ListGpus();
+bool SetAutostart(bool enabled);
+/// SystemConfig（日志开关、数据目录）走单独命令，后台会落盘 system.json
+bool SetSystem(const std::string& key, const std::string& valueJson);
 
 /// UTF-8 → UTF-16
 std::wstring Utf8ToWide(const std::string& text);

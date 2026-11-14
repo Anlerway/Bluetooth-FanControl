@@ -1,5 +1,5 @@
 ﻿<#
-FanControl 发布打包脚本（后台 FanControl.Host.exe + 界面 FanControl.UI.exe）
+FanControl 发布打包脚本（单一进程 FanControl.exe + 进程内界面 FanControl.UI.dll）
 -------------------------------------------------------------------------------
 产物（文件名来自 package-names.txt，UTF-8 保存，{0} 为版本号）：
   zip   自带运行时 : <ReleaseRoot>\FanControl-v1.4.0-<label>.zip
@@ -10,8 +10,8 @@ FanControl 发布打包脚本（后台 FanControl.Host.exe + 界面 FanControl.U
 用法：
   powershell -NoProfile -ExecutionPolicy Bypass -File installer\_build-release.ps1
 
-流程：本地构建 C++ 界面 → dotnet publish 后台（两种 flavor）→ 把界面 exe 拷进发布目录
-→ 打包 zip 与 Inno Setup 安装包。安装包不检测 .NET 运行环境（见 installer.iss）。
+流程：本地构建 C++ 界面 DLL → dotnet publish 宿主（两种 flavor，产物是 FanControl.exe）
+→ 把界面 DLL 拷进发布目录 → 打包 zip 与 Inno Setup 安装包。安装包不检测 .NET 运行环境（见 installer.iss）。
 #>
 
 param(
@@ -65,8 +65,8 @@ function Invoke-UiBuild {
     if (-not (Test-Path $bat)) { throw "build.bat not found: $bat" }
 
     Write-Host "`n-- build C++ UI -> $script:UiProjectDir\build" -ForegroundColor Yellow
-    # 正在运行的界面会锁住 exe，先结束自己拉起的实例
-    Get-Process FanControl.UI -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+    # 正在运行的宿主会锁住 DLL，先结束自己拉起的实例
+    Get-Process FanControl -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
     $cmd = 'cd /d "' + $script:UiProjectDir + '" && build.bat > build.log 2>&1'
     & cmd.exe /c $cmd
@@ -75,18 +75,15 @@ function Invoke-UiBuild {
         throw "C++ UI build failed (exit $LASTEXITCODE)"
     }
 
-    $exe = Join-Path $script:UiProjectDir 'build\FanControl.UI.exe'
-    if (-not (Test-Path $exe)) { throw "FanControl.UI.exe missing after build: $exe" }
-    # 启动器：管理员权限入口，安装器与快捷方式都指向它
-    $launcher = Join-Path $script:UiProjectDir 'build\FanControl.exe'
-    if (-not (Test-Path $launcher)) { throw "FanControl.exe (launcher) missing after build: $launcher" }
-    Write-Host ("   ok: FanControl.UI.exe {0:N0} bytes, FanControl.exe {1:N0} bytes" -f (Get-Item $exe).Length, (Get-Item $launcher).Length)
-    return @($exe, $launcher)
+    $dll = Join-Path $script:UiProjectDir 'build\FanControl.UI.dll'
+    if (-not (Test-Path $dll)) { throw "FanControl.UI.dll missing after build: $dll" }
+    Write-Host ("   ok: FanControl.UI.dll {0:N0} bytes" -f (Get-Item $dll).Length)
+    return $dll
 }
 
 # --- 2) 发布后台 ------------------------------------------------------
 function Invoke-Publish {
-    param([string]$Name, [string]$OutDir, [bool]$SelfContained, [string[]]$UiExes)
+    param([string]$Name, [string]$OutDir, [bool]$SelfContained, [string]$UiDll)
 
     Write-Host "`n-- publish [$Name] -> $OutDir" -ForegroundColor Yellow
     if (Test-Path $OutDir) { Remove-Item $OutDir -Recurse -Force }
@@ -107,14 +104,15 @@ function Invoke-Publish {
     & dotnet @publishArgs
     if ($LASTEXITCODE -ne 0) { throw "publish failed: $Name (exit $LASTEXITCODE)" }
 
-    $hostExe = Join-Path $OutDir 'FanControl.Host.exe'
-    if (-not (Test-Path $hostExe)) { throw "FanControl.Host.exe missing in publish output: $OutDir" }
+    $hostExe = Join-Path $OutDir 'FanControl.exe'
+    if (-not (Test-Path $hostExe)) { throw "FanControl.exe missing in publish output: $OutDir" }
 
-    foreach ($uiExe in $UiExes) { Copy-Item $uiExe (Join-Path $OutDir (Split-Path $uiExe -Leaf)) -Force }
+    # 界面 DLL 由 csproj 的 None/ CopyToPublishDirectory 带出来，这里再兜一次底
+    Copy-Item $UiDll (Join-Path $OutDir 'FanControl.UI.dll') -Force
 
     $files = Get-ChildItem $OutDir -Recurse -File
     $size = [math]::Round(($files | Measure-Object Length -Sum).Sum / 1MB, 1)
-    Write-Host ("   ok: FanControl.Host.exe + FanControl.UI.exe + FanControl.exe, {0} files / {1} MB" -f $files.Count, $size)
+    Write-Host ("   ok: FanControl.exe + FanControl.UI.dll, {0} files / {1} MB" -f $files.Count, $size)
 }
 
 function New-ZipPackage {
@@ -142,13 +140,13 @@ function Invoke-Iscc {
 }
 
 # --- 主流程 -----------------------------------------------------------
-$uiExes = @(Invoke-UiBuild)
+$uiDll = Invoke-UiBuild
 
 $selfContainedDir = Join-Path $ReleaseRoot 'selfcontained'
 $frameworkDir = Join-Path $ReleaseRoot 'framework'
 
-Invoke-Publish -Name 'self-contained' -OutDir $selfContainedDir -SelfContained $true -UiExes $uiExes
-Invoke-Publish -Name 'framework-dependent (.NET 8 required)' -OutDir $frameworkDir -SelfContained $false -UiExes $uiExes
+Invoke-Publish -Name 'self-contained' -OutDir $selfContainedDir -SelfContained $true -UiDll $uiDll
+Invoke-Publish -Name 'framework-dependent (.NET 8 required)' -OutDir $frameworkDir -SelfContained $false -UiDll $uiDll
 
 New-ZipPackage -SourceDir $selfContainedDir -ZipPath (Join-Path $ReleaseRoot $packageNames['zip-selfcontained'])
 New-ZipPackage -SourceDir $frameworkDir -ZipPath (Join-Path $ReleaseRoot $packageNames['zip-framework'])

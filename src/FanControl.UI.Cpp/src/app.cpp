@@ -115,7 +115,9 @@ bool App::Init(HWND hwnd) {
     snap_.gpu = gpuHist_.back().second;
     snap_.pwm = static_cast<int>(pwmHist_.back().second);
     const bool ok = CreateTarget();
-    StartIpc();
+    // 单进程：界面 DLL 由 FanControl.exe 在进程内加载，后台从一开始就是「已连接」
+    backendUp_ = true;
+    snap_.backendConnected = true;
     return ok;
 }
 
@@ -162,7 +164,6 @@ void App::DropTarget() {
 }
 
 void App::Release() {
-    StopIpc();
     DropTarget();
     for (IDWriteTextFormat** f : { &fTitle_, &fH2_, &fBody_, &fBodyStrong_, &fSmall_, &fBig_, &fGlyph_ }) {
         if (*f) { (*f)->Release(); *f = nullptr; }
@@ -270,6 +271,18 @@ void App::Switch(float x, float y, bool on) {
     float kx = on ? (track.right - knob - 4) : (track.left + 4);
     D2D1_RECT_F k = D2D1::RectF(kx, y + 4, kx + knob, y + 4 + knob);
     FillRound(k, knob / 2, on ? theme_.accentText : theme_.textPrimary);
+}
+
+float App::MeasureText(const std::wstring& text, IDWriteTextFormat* format) const {
+    if (!dw_ || !format || text.empty()) return 0.0f;
+    IDWriteTextLayout* layout = nullptr;
+    if (FAILED(dw_->CreateTextLayout(text.c_str(), static_cast<UINT32>(text.size()), format,
+                                     2048.0f, 100.0f, &layout)) || !layout)
+        return 0.0f;
+    DWRITE_TEXT_METRICS m{};
+    const float width = SUCCEEDED(layout->GetMetrics(&m)) ? m.widthIncludingTrailingWhitespace : 0.0f;
+    layout->Release();
+    return width;
 }
 
 void App::Chip(float x, float y, float w, float h, const std::wstring& text, bool accent,
@@ -407,9 +420,9 @@ void App::DrawSidebar(float w, float h) {
     float by = h - 64.0f;
     D2D1_COLOR_F dot = snap_.backendConnected ? theme_.ok : theme_.textTertiary;
     FillRound(D2D1::RectF(24, by + 8, 32, by + 16), 4.0f, dot);
-    Text(snap_.backendConnected ? fc::T(L"后台已连接") : fc::T(L"演示数据（后台未连接）"),
+    Text(snap_.backendConnected ? fc::T(L"服务运行中") : fc::T(L"演示数据（服务未就绪）"),
          D2D1::RectF(40, by, kSidebarWidth - 20, by + 24), fSmall_, theme_.textSecondary);
-    Text(Fmt(fc::T(L"后台 v1.4.0 · %s"), dark_ ? fc::T(L"深色") : fc::T(L"浅色")),
+    Text(Fmt(fc::T(L"版本 1.4.0 · %s"), dark_ ? fc::T(L"深色") : fc::T(L"浅色")),
          D2D1::RectF(24, by + 24, kSidebarWidth - 20, by + 48), fSmall_, theme_.textTertiary);
 }
 
@@ -604,7 +617,7 @@ void App::DrawSettings(float x, float y, float w) {
                   config_.pollIntervalMilliseconds / 1000.0, 0.1, 5.0,
                   Fmt(L"%.1f s", config_.pollIntervalMilliseconds / 1000.0));
         ry += rowH;
-        RowToggle(x, ry, w, rowH, L"set:autostart", fc::T(L"开机自启"), fc::T(L"登录后自动启动后台守护进程"), autostart_);
+        RowToggle(x, ry, w, rowH, L"set:autostart", fc::T(L"开机自启"), fc::T(L"登录后自动启动 FanControl"), autostart_);
         ry += rowH;
         RowCombo(x, ry, w, rowH, L"set:datadir", fc::T(L"数据目录"), fc::T(L"配置与日志的存放位置（重启后生效）"),
                  DataDirLabel());
@@ -643,10 +656,14 @@ void App::DrawCurve(float x, float y, float w) {
     StrokeRound(card, 8.0f, theme_.cardBorder);
 
     // 两条曲线用页签切换：温度→PWM（风扇温度曲线）、转速→PWM（目标转速曲线）
-    Chip(x + 16, y + 12, 104, 30, fc::T(L"温度曲线"), curveTab_ == 0, L"curve:temp");
-    Chip(x + 128, y + 12, 104, 30, fc::T(L"转速曲线"), curveTab_ == 1, L"curve:rpm");
+    // 宽度按文字量：英文 “Temperature curve” 比中文长，固定 104 会溢出
+    const float tabW = std::max({ 104.0f,
+        MeasureText(fc::T(L"温度曲线"), fBody_) + 32.0f,
+        MeasureText(fc::T(L"转速曲线"), fBody_) + 32.0f });
+    Chip(x + 16, y + 12, tabW, 30, fc::T(L"温度曲线"), curveTab_ == 0, L"curve:temp");
+    Chip(x + 24 + tabW, y + 12, tabW, 30, fc::T(L"转速曲线"), curveTab_ == 1, L"curve:rpm");
     Text(curveTab_ == 0 ? fc::T(L"温度 °C → PWM %") : fc::T(L"转速 RPM → PWM %"),
-         D2D1::RectF(x + 248, y + 16, x + w - 16, y + 40), fSmall_, theme_.textSecondary);
+         D2D1::RectF(x + 40 + 2 * tabW, y + 16, x + w - 16, y + 40), fSmall_, theme_.textSecondary);
 
     std::vector<Point2>& points = curveTab_ == 0 ? curve_ : rpmCurve_;
     const double xMax = curveTab_ == 0 ? 120.0 : 10000.0;
@@ -682,23 +699,30 @@ void App::DrawCurve(float x, float y, float w) {
 
     // 1.3.0 曲线页的四个按钮：添加点 / 删除点 / 重置 / 保存
     float by = y + h + 16;
-    Chip(x, by, 88, 32, fc::T(L"添加点"), false, L"curve:add");
-    Chip(x + 96, by, 88, 32, fc::T(L"删除点"), false, L"curve:del");
-    Chip(x + 192, by, 88, 32, fc::T(L"重置"), false, L"reset");
-    Chip(x + 288, by, 88, 32, fc::T(L"保存"), true, L"apply");
-    Text(fc::T(L"拖动圆点调整映射，点击空白处新增点"), D2D1::RectF(x + 392, by, x + w, by + 32), fSmall_,
+    float bx = x;
+    auto actionChip = [&](const wchar_t* label, bool accent, const wchar_t* id) {
+        const float bw = std::max(88.0f, MeasureText(fc::T(label), fBody_) + 32.0f);
+        Chip(bx, by, bw, 32, fc::T(label), accent, id);
+        bx += bw + 8;
+    };
+    actionChip(L"添加点", false, L"curve:add");
+    actionChip(L"删除点", false, L"curve:del");
+    actionChip(L"重置", false, L"reset");
+    actionChip(L"保存", true, L"apply");
+    Text(fc::T(L"拖动圆点调整映射，点击空白处新增点"), D2D1::RectF(bx + 8, by, x + w, by + 32), fSmall_,
          theme_.textTertiary);
     contentHeight_ = by + 32 + 24 - y;
 }
 
 void App::DrawAbout(float x, float y, float w) {
+    const float top = y;
     float rowH = 56.0f;
     Card(x, y, w, L"", 4 * rowH + 8);
     struct Row { const wchar_t* k; std::wstring v; };
     Row rows[4] = {
         { fc::T(L"版本"), fc::T(L"1.4.0（C++ UI）") },
         { fc::T(L"界面"), L"Win32 + Direct2D / DirectWrite" },
-        { fc::T(L"后端"), snap_.backendConnected ? fc::T(L"FanControl 守护进程（命名管道）") : fc::T(L"未连接（演示数据）") },
+        { fc::T(L"运行方式"), snap_.backendConnected ? fc::T(L"界面与采样在同一进程") : fc::T(L"未连接（演示数据）") },
         { fc::T(L"配置文件"), L"%APPDATA%\\FanControl\\Config\\appconfig.json" },
     };
     float ry = y + 4;
@@ -708,9 +732,11 @@ void App::DrawAbout(float x, float y, float w) {
         ry += rowH;
     }
     y += 4 * rowH + 8 + 20;
-    Chip(x, y, 110, 32, fc::T(L"打开日志目录"), false, L"logs");
-    Chip(x + 118, y, 118, 32, fc::T(L"打开发布页"), false, L"release");
-    contentHeight_ = y + 32 + 24 - y;
+    const float logsW = std::max(110.0f, MeasureText(fc::T(L"打开日志目录"), fBody_) + 32.0f);
+    const float releaseW = std::max(118.0f, MeasureText(fc::T(L"打开发布页"), fBody_) + 32.0f);
+    Chip(x, y, logsW, 32, fc::T(L"打开日志目录"), false, L"logs");
+    Chip(x + logsW + 8, y, releaseW, 32, fc::T(L"打开发布页"), false, L"release");
+    contentHeight_ = y + 32 + 24 - top;
 }
 
 // ---------------- 行内下拉（ComboBox） ----------------
@@ -766,16 +792,13 @@ void App::FillComboItems(const std::wstring& id) {
     } else if (id == L"set:gpusel") {
         add(TN(L"自动"), L"Auto");
         comboBusy_ = true;
-        std::lock_guard<std::mutex> lock(sendMutex_);
-        if (ipc_ && ipc_->IsOpen()) ipc_->ListGpus();
+        fc::ListGpus();
     } else if (id == L"set:comport") {
         comboBusy_ = true;
-        std::lock_guard<std::mutex> lock(sendMutex_);
-        if (ipc_ && ipc_->IsOpen()) ipc_->ListPorts();
+        fc::ListPorts();
     } else if (id == L"set:bledev") {
         comboBusy_ = true;
-        std::lock_guard<std::mutex> lock(sendMutex_);
-        if (ipc_ && ipc_->IsOpen()) ipc_->ScanBleDevices();
+        fc::ScanBleDevices();
     }
 }
 
@@ -948,7 +971,7 @@ void App::Tick() {
         return;
     }
     {
-        // 后台未连接时用演示波形占位，连上后完全以管道数据为准
+        // 后台未接上时用演示波形占位，接上后完全以后台数据为准
         snap_.cpu = 46.0 + 9.0 * std::sin(t_ / 17.0) + 2.0 * std::sin(t_ / 3.1);
         snap_.gpu = 52.0 + 11.0 * std::sin(t_ / 23.0 + 1.2);
         const double pwm = 30.0 + 26.0 * std::sin(t_ / 19.0 + 0.4);
@@ -1057,10 +1080,7 @@ void App::OnLButtonDown(int x, int y) {
             dragIndex_ = -1;
             InvalidateRect(hwnd_, nullptr, FALSE);
         } else if (id == L"act:reconnect") {
-            {
-                std::lock_guard<std::mutex> lock(sendMutex_);
-                if (ipc_ && ipc_->IsOpen()) ipc_->RequestReconnect();
-            }
+            fc::RequestReconnect();
             toast_.clear();  // 状态由下一帧 state 带回来，这里不假装成功
             InvalidateRect(hwnd_, nullptr, FALSE);
         } else if (id == L"settings:reload") {
@@ -1133,83 +1153,10 @@ void App::ToggleTheme() {
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
-// ---------------- 后台守护进程（命名管道）----------------
-
-void App::StartIpc() {
-    if (ipcThread_.joinable()) return;
-    ipc_ = std::make_unique<fc::IpcClient>();
-    ipcStop_ = false;
-    ipcThread_ = std::thread([this]() {
-        fc::Message message;
-        while (!ipcStop_) {
-            bool connected = false;
-            {
-                std::lock_guard<std::mutex> lock(sendMutex_);
-                connected = ipc_->Connect(1200);
-            }
-            if (!connected) {
-                if (backendUp_.exchange(false) && hwnd_) PostMessageW(hwnd_, WM_APP + 2, 0, 0);
-                if (!launcherTried_) {
-                    launcherTried_ = true;
-                    StartHostProcess();
-                }
-                for (int i = 0; i < 8 && !ipcStop_; ++i) Sleep(250);
-                continue;
-            }
-            if (!backendUp_.exchange(true) && hwnd_) PostMessageW(hwnd_, WM_APP + 2, 1, 0);
-            // 服务端连上就推一份 state；先读后写，避免首帧写把界面线程堵在管道缓冲上
-            while (!ipcStop_) {
-                // 用超时读替代阻塞读：既能及时响应退出，也不会被空闲管道挂住
-                if (!ipc_->ReadMessage(1000, message)) {
-                    if (ipcStop_) break;
-                    if (ipc_->IsOpen()) continue;
-                    break;
-                }
-                auto* payload = new fc::Message(message);
-                if (!hwnd_ || !PostMessageW(hwnd_, WM_APP + 1, 0, reinterpret_cast<LPARAM>(payload))) {
-                    delete payload;
-                    break;
-                }
-            }
-            {
-                std::lock_guard<std::mutex> lock(sendMutex_);
-                ipc_->Close();
-            }
-            if (backendUp_.exchange(false) && hwnd_) PostMessageW(hwnd_, WM_APP + 2, 0, 0);
-            for (int i = 0; i < 8 && !ipcStop_; ++i) Sleep(250);
-        }
-    });
-}
-
-void App::StopIpc() {
-    ipcStop_ = true;
-    {
-        std::lock_guard<std::mutex> lock(sendMutex_);
-        if (ipc_) ipc_->Close();
-    }
-    if (ipcThread_.joinable()) ipcThread_.join();
-    ipc_.reset();
-}
+// ---------------- 与后台的交互（同进程）----------------
 
 void App::SendValue(const char* key, const char* valueJson) {
-    std::lock_guard<std::mutex> lock(sendMutex_);
-    if (ipc_ && ipc_->IsOpen()) ipc_->SetValue(key, valueJson);
-}
-
-void App::OnIpcStatus(bool connected) {
-    backendUp_ = connected;
-    snap_.backendConnected = connected;
-    if (!connected) {
-        snap_.commMode = fc::T(L"等待后台连接");
-        snap_.lastError.clear();
-    } else {
-        // 连上后台后丢弃演示历史，只保留真实采样
-        cpuHist_.clear();
-        gpuHist_.clear();
-        pwmHist_.clear();
-        lastSampleMs_ = 0;
-    }
-    InvalidateRect(hwnd_, nullptr, FALSE);
+    fc::SetValue(key, valueJson);
 }
 
 void App::OnIpcMessage(void* payload) {
@@ -1315,8 +1262,7 @@ void App::PushCurveToBackend() {
     std::vector<fc::CurvePoint> points;
     points.reserve(source.size());
     for (const auto& point : source) points.push_back(fc::CurvePoint{ point.t, point.p });
-    std::lock_guard<std::mutex> lock(sendMutex_);
-    if (ipc_ && ipc_->IsOpen()) ipc_->SetCurve(points, curveTab_ != 0);
+    fc::SetCurve(points, curveTab_ != 0);
 }
 
 void App::SendString(const char* key, const std::wstring& value) {
@@ -1330,8 +1276,7 @@ void App::SendString(const char* key, const std::wstring& value) {
 }
 
 void App::SendAutostart(bool enabled) {
-    std::lock_guard<std::mutex> lock(sendMutex_);
-    if (ipc_ && ipc_->IsOpen()) ipc_->SetAutostart(enabled);
+    fc::SetAutostart(enabled);
 }
 
 std::wstring App::ModeLabel(const std::wstring& mode) const {
@@ -1404,13 +1349,11 @@ std::wstring App::CurrentComboLabel(const std::wstring& id) const {
 }
 
 void App::SendSystem(const char* key, const std::string& valueJson) {
-    std::lock_guard<std::mutex> lock(sendMutex_);
-    if (ipc_ && ipc_->IsOpen()) ipc_->SetSystem(key, valueJson);
+    fc::SetSystem(key, valueJson);
 }
 
 void App::ReloadFromBackend() {
-    std::lock_guard<std::mutex> lock(sendMutex_);
-    if (ipc_ && ipc_->IsOpen()) ipc_->RequestState();
+    fc::RequestState();
 }
 
 void App::HandleSettingClick(const std::wstring& id, D2D1_RECT_F rect, int clickX) {
@@ -1502,27 +1445,4 @@ void App::AddCurvePointAt(float sx, float sy) {
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
-void App::StartHostProcess() {
-    wchar_t dir[MAX_PATH] = {};
-    GetModuleFileNameW(nullptr, dir, MAX_PATH);
-    if (wchar_t* slash = wcsrchr(dir, L'\\')) *(slash + 1) = L'\0';
-    else return;
-    // 优先用启动器（FanControl.exe）：它带管理员清单，一次 UAC 就能把后台拉起来并通知它显示界面；
-    // 没有启动器时退回直接拉守护进程。
-    wchar_t path[MAX_PATH] = {};
-    wcscpy_s(path, dir);
-    wcscat_s(path, L"FanControl.exe");
-    if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES) {
-        wcscpy_s(path, dir);
-        wcscat_s(path, L"FanControl.Host.exe");
-    }
-    if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES) return;
-    // 守护进程需要管理员权限：首次连接失败时按需提权拉起
-    auto result = reinterpret_cast<INT_PTR>(
-        ShellExecuteW(nullptr, L"runas", path, nullptr, nullptr, SW_SHOWNORMAL));
-    if (result <= 32) {
-        toast_ = fc::T(L"启动后台失败（需要管理员权限）");
-        toastUntil_ = GetTickCount() + 3000;
-    }
-}
 

@@ -3,7 +3,7 @@ using FanControl.Shared.Contracts;
 using FanControl.Shared.Enums;
 using FanControl.Shared.Models;
 
-namespace FanControl.Host.Ipc;
+namespace FanControl.Host.Ui;
 
 /// <summary>
 /// 界面下发单个配置项时在这里落地：界面不需要复制 AppConfig 的完整结构，

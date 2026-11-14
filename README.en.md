@@ -32,7 +32,7 @@
 
 A full remake built on top of the 垃圾研究社 open-source hardware:
 
-- **Host app**: a resident background daemon (C#, tray + hardware access) plus a native UI (C++ / Direct2D, Windows 11 Settings look), adding auto-reconnect, auto-start, a control dashboard, more flexible temperature sources, and adjustable temperature-fan curves;
+- **Host app**: a single resident process (C# host with the native C++ / Direct2D UI loaded in-process, tray + hardware access), adding auto-reconnect, auto-start, a control dashboard, more flexible temperature sources, and adjustable temperature-fan curves;
 
 ## Features
 
@@ -79,52 +79,54 @@ A full remake built on top of the 垃圾研究社 open-source hardware:
 
 ## Architecture
 
-Two processes plus one launcher:
+One process; the UI is a DLL it loads:
 
-- **`FanControl.exe`** (C++, administrator manifest) is the single entry point: it starts the daemon if needed and asks it to show the UI — one UAC prompt in total;
-- **`FanControl.Host.exe`** (C#, administrator) runs resident and owns the sampling loop, PWM computation, BLE/COM communication, config persistence and the tray icon;
-- **`FanControl.UI.exe`** (C++20 + Direct2D/DirectWrite, standard user) is started on demand and talks to the daemon over the `FanControl.Host.v1` named pipe; closing the UI leaves fan control running;
-- Both run in one named job object (`Local\FanControl.Group`): if the daemon exits, crashes or is killed, the UI goes with it instead of lingering as an orphan window.
+- **`FanControl.exe`** (C#, administrator manifest) is the only process: it runs resident and owns the sampling loop, PWM computation, BLE/COM communication, config persistence and the tray icon;
+- **`FanControl.UI.dll`** (C++20 + Direct2D/DirectWrite) is loaded in-process by the host and creates its window on a dedicated STA thread; closing the window only destroys it — sampling and fan control keep running;
+- No named pipe between them, just a function call: the host serialises state to JSON every 400 ms and calls `FcUiPush`, the UI sends commands as JSON through the callback registered with `FcUiSetCommandSink` (same message format as 1.4.0);
+- With a single process there is no launcher and no orphan-window problem.
 
 ```text
 FanControl.slnx
 ├── src/
-│   ├── FanControl.Shared/    # Shared contracts: enums / models / IPC framing
+│   ├── FanControl.Shared/    # Shared contracts: enums / models / error codes
 │   ├── FanControl.Service/   # Library: sampling loop, hardware sources, communication, config, logging, tray
-│   ├── FanControl.Host/      # Background daemon (C#, resident, tray + named-pipe server)
-│   └── FanControl.UI.Cpp/    # UI (C++20, Direct2D custom drawing, Windows 11 Settings style)
+│   ├── FanControl.Host/      # Single-process host (C#, builds FanControl.exe: tray + sampling + UI bridge)
+│   └── FanControl.UI.Cpp/    # UI (C++20, Direct2D custom drawing, builds FanControl.UI.dll)
 ├── installer/                # Inno Setup script and one-shot packaging script
 ├── tests/FanControl.Tests
-└── docs/                     # Architecture, device protocol and IPC protocol docs
+└── docs/                     # Architecture, device protocol and UI protocol docs
 ```
 
 Sampling chain: `temperature source (independent CPU/GPU) → curve lookup by mode → PWM smoothing → send over BLE/COM → OLED display`.
 
-Ownership: temperatures/RPM/PWM/connection state and config writes live only in the daemon; the UI only owns the current page, scroll position and an in-progress curve edit. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/PROTOCOL.md](docs/PROTOCOL.md).
+Ownership: temperatures/RPM/PWM/connection state and config writes live only in the host; the UI only owns the current page, scroll position and an in-progress curve edit. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) and [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
 ## Environment
 
 ### Host app
 
 - Windows 10/11 x64;
-- .NET 8 SDK (8.0.423+) — to build the daemon and libraries;
+- .NET 8 SDK (8.0.423+) — to build the host and libraries;
 - MSVC (Visual Studio 2026 Build Tools or IDE) + Windows SDK 10, C++20 — to build the UI;
 - Inno Setup 6 (to build installers).
 
 ## Build
 
-Prerequisites: .NET 8 SDK (8.0.423+) for the daemon, MSVC + Windows SDK 10 for the UI.
+Prerequisites: .NET 8 SDK (8.0.423+) for the host, MSVC + Windows SDK 10 for the UI.
+
+Build the UI first, then the host (the host project copies `FanControl.UI.dll` into its own output):
 
 ```powershell
-# Daemon, libraries & tests
-dotnet build src\FanControl.Host\FanControl.Host.csproj -c Debug
-dotnet test tests\FanControl.Tests
-
-# UI (C++): build.bat calls vcvars64 and then cl
+# UI (C++): build.bat calls vcvars64 and then cl; produces build\FanControl.UI.dll
 cd src\FanControl.UI.Cpp
 build.bat
 # or with CMake (bundled with Visual Studio)
 cmake -B build -S . && cmake --build build --config Release
+
+# Host, libraries & tests: output is bin\Debug\net8.0-windows\FanControl.exe + FanControl.UI.dll
+dotnet build src\FanControl.Host\FanControl.Host.csproj -c Debug
+dotnet test tests\FanControl.Tests
 ```
 
 ### One-shot packaging (two flavors)
@@ -133,7 +135,7 @@ cmake -B build -S . && cmake --build build --config Release
 powershell -NoProfile -ExecutionPolicy Bypass -File installer\_build-release.ps1
 ```
 
-The script builds the C++ UI, publishes the daemon in both flavors, copies `FanControl.UI.exe` into the publish folder, zips it and calls Inno Setup. Artifacts land **outside** the repo in `..\..\artifacts\`.
+The script builds the C++ UI (`build\FanControl.UI.dll`), publishes the host in both flavors, copies the DLL into the publish folder, zips it and calls Inno Setup. Artifacts land **outside** the repo in `..\..\artifacts\`.
 
 | Form | Self-contained (no .NET needed) | Needs .NET 8 |
 | --- | --- | --- |
@@ -144,12 +146,12 @@ The script builds the C++ UI, publishes the daemon in both flavors, copies `FanC
 
 ## Run
 
-Run `FanControl.exe` from the publish output (the installer, shortcuts and uninstaller all point at it). Running `FanControl.UI.exe` directly also works — it elevates and starts the launcher when the daemon is missing:
+Run `FanControl.exe` from the publish output (the installer, shortcuts and uninstaller all point at it):
 
 - UI: dashboard (live temperatures/trend), settings, curve editor, about;
-- Tray (owned by the daemon): open UI / reconnect / auto-start / exit; closing the UI keeps fan control running;
-- The daemon needs administrator rights (hardware sensors); auto-start runs silently with highest privileges via Task Scheduler;
-- All three exes must sit in the same folder (the launcher looks for the daemon, the UI looks for the launcher, the daemon starts the UI next to itself);
+- Tray (same process): open UI / reconnect / auto-start / exit; closing the window keeps fan control running and the tray icon stays;
+- Administrator rights are required (hardware sensors); auto-start runs silently with highest privileges via Task Scheduler;
+- `FanControl.exe` and `FanControl.UI.dll` must sit in the same folder; when the DLL is missing the host shows a message box and keeps running in the tray;
 - The auto-start scheduled task runs `<install dir>\FanControl.exe --autostart`, exactly like 1.3.0, so upgrading keeps the existing task working.
 
 ## Temperature sources

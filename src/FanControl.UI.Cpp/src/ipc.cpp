@@ -12,8 +12,6 @@
 namespace fc {
 namespace {
 
-constexpr wchar_t kPipeName[] = L"\\\\.\\pipe\\FanControl.Host.v1";
-
 // ---------------------------------------------------------------- JSON 解析
 
 struct JValue {
@@ -321,57 +319,6 @@ void FillState(const JValue& node, State& state) {
     state.timestamp = static_cast<long long>(Num(node.Get("timestamp")));
 }
 
-// 管道句柄以 FILE_FLAG_OVERLAPPED 打开：读写都带超时，界面线程永远不会被
-// 一个空闲/半死的后台连接卡死（同步句柄上 WriteFile 可能无限阻塞）。
-bool OverlappedIo(HANDLE pipe, HANDLE ioEvent, bool write, void* buffer, DWORD size, DWORD timeoutMs,
-                  DWORD* transferred) {
-    if (ioEvent == nullptr) return false;
-    OVERLAPPED overlapped = {};
-    overlapped.hEvent = ioEvent;
-    ResetEvent(ioEvent);
-
-    const BOOL started = write ? WriteFile(pipe, buffer, size, nullptr, &overlapped)
-                               : ReadFile(pipe, buffer, size, nullptr, &overlapped);
-    if (!started) {
-        const DWORD error = GetLastError();
-        if (error != ERROR_IO_PENDING) return false;
-    }
-
-    if (WaitForSingleObject(ioEvent, timeoutMs) != WAIT_OBJECT_0) {
-        CancelIoEx(pipe, &overlapped);
-        return false;
-    }
-
-    DWORD done = 0;
-    if (!GetOverlappedResult(pipe, &overlapped, &done, FALSE) || done == 0) return false;
-    *transferred = done;
-    return true;
-}
-
-bool ReadExact(HANDLE pipe, HANDLE ioEvent, void* buffer, DWORD size, DWORD timeoutMs) {
-    auto* cursor = static_cast<char*>(buffer);
-    DWORD remaining = size;
-    while (remaining > 0) {
-        DWORD read = 0;
-        if (!OverlappedIo(pipe, ioEvent, false, cursor, remaining, timeoutMs, &read)) return false;
-        cursor += read;
-        remaining -= read;
-    }
-    return true;
-}
-
-bool WriteExact(HANDLE pipe, HANDLE ioEvent, const void* buffer, DWORD size, DWORD timeoutMs) {
-    auto* cursor = static_cast<const char*>(buffer);
-    DWORD remaining = size;
-    while (remaining > 0) {
-        DWORD written = 0;
-        if (!OverlappedIo(pipe, ioEvent, true, const_cast<char*>(cursor), remaining, timeoutMs, &written)) return false;
-        cursor += written;
-        remaining -= written;
-    }
-    return true;
-}
-
 }  // namespace
 
 std::wstring Utf8ToWide(const std::string& text) {
@@ -393,65 +340,25 @@ std::string WideToUtf8(const std::wstring& text) {
     return narrow;
 }
 
-IpcClient::~IpcClient() { Close(); }
+namespace {
+CommandSink g_commandSink = nullptr;
+}  // namespace
 
-bool IpcClient::Connect(int timeoutMs) {
-    Close();
-    const ULONGLONG deadline = GetTickCount64() + static_cast<ULONGLONG>(timeoutMs < 0 ? 0 : timeoutMs);
-    for (;;) {
-        // SECURITY_SQOS_PRESENT + SECURITY_IDENTIFICATION：命名管道默认要 impersonation 级，
-        // 受限令牌（标准用户、低完整性）下会被拒绝（ERROR_ACCESS_DENIED）。声明只允许服务端
-        // 识别客户端身份，既放行连接，也避免守护进程拿到可冒用令牌。
-        HANDLE pipe = CreateFileW(kPipeName, GENERIC_READ | GENERIC_WRITE, 0, nullptr, OPEN_EXISTING,
-                                  FILE_ATTRIBUTE_NORMAL | FILE_FLAG_OVERLAPPED | SECURITY_SQOS_PRESENT |
-                                      SECURITY_IDENTIFICATION,
-                                  nullptr);
-        if (pipe != INVALID_HANDLE_VALUE) {
-            pipe_ = pipe;
-            readEvent_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-            writeEvent_ = CreateEventW(nullptr, TRUE, FALSE, nullptr);
-            return true;
-        }
-        if (timeoutMs >= 0 && GetTickCount64() >= deadline) return false;
-        Sleep(100);
-    }
+void SetCommandSink(CommandSink sink) { g_commandSink = sink; }
+
+bool HasCommandSink() { return g_commandSink != nullptr; }
+
+bool Send(const std::string& json) {
+    CommandSink sink = g_commandSink;
+    if (sink == nullptr) return false;
+    sink(json.c_str());
+    return true;
 }
 
-void IpcClient::Close() {
-    if (pipe_ != nullptr) {
-        CancelIoEx(static_cast<HANDLE>(pipe_), nullptr);
-        CloseHandle(static_cast<HANDLE>(pipe_));
-        pipe_ = nullptr;
-    }
-    if (readEvent_ != nullptr) {
-        CloseHandle(static_cast<HANDLE>(readEvent_));
-        readEvent_ = nullptr;
-    }
-    if (writeEvent_ != nullptr) {
-        CloseHandle(static_cast<HANDLE>(writeEvent_));
-        writeEvent_ = nullptr;
-    }
-}
-
-bool IpcClient::ReadMessage(int timeoutMs, Message& message) {
-    if (pipe_ == nullptr) return false;
-    HANDLE pipe = static_cast<HANDLE>(pipe_);
-
-    HANDLE ioEvent = static_cast<HANDLE>(readEvent_);
-    const DWORD headerTimeout = timeoutMs < 0 ? INFINITE : static_cast<DWORD>(timeoutMs);
-
-    unsigned char header[4] = {};
-    if (!ReadExact(pipe, ioEvent, header, 4, headerTimeout)) return false;
-    const unsigned length =
-        static_cast<unsigned>(header[0]) | (static_cast<unsigned>(header[1]) << 8) |
-        (static_cast<unsigned>(header[2]) << 16) | (static_cast<unsigned>(header[3]) << 24);
-    if (length == 0 || length > (1u << 20)) return false;
-    std::string payload(length, '\0');
-    if (!ReadExact(pipe, ioEvent, payload.data(), length, 4000)) return false;
-
+bool ParseMessage(const std::string& text, Message& message) {
     message = Message();
     JValue root;
-    if (!JsonParser(payload).Parse(root) || root.kind != JValue::Obj) return false;
+    if (!JsonParser(text).Parse(root) || root.kind != JValue::Obj) return false;
     message.event = Str(root.Get("event"));
     if (const JValue* error = root.Get("message")) message.error = Str(error);
     if (const JValue* code = root.Get("code")) message.errorCode = Str(code);
@@ -500,25 +407,12 @@ bool IpcClient::ReadMessage(int timeoutMs, Message& message) {
     return true;
 }
 
-bool IpcClient::Send(const std::string& json) {
-    if (pipe_ == nullptr) return false;
-    HANDLE pipe = static_cast<HANDLE>(pipe_);
-    const unsigned length = static_cast<unsigned>(json.size());
-    unsigned char header[4] = {static_cast<unsigned char>(length & 0xFF),
-                               static_cast<unsigned char>((length >> 8) & 0xFF),
-                               static_cast<unsigned char>((length >> 16) & 0xFF),
-                               static_cast<unsigned char>((length >> 24) & 0xFF)};
-    HANDLE ioEvent = static_cast<HANDLE>(writeEvent_);
-    if (!WriteExact(pipe, ioEvent, header, 4, 2000)) return false;
-    return WriteExact(pipe, ioEvent, json.data(), length, 2000);
-}
-
-bool IpcClient::SetValue(const std::string& key, const std::string& valueJson) {
+bool SetValue(const std::string& key, const std::string& valueJson) {
     std::string json = "{\"cmd\":\"set\",\"key\":\"" + key + "\",\"value\":" + valueJson + "}";
     return Send(json);
 }
 
-bool IpcClient::SetCurve(const std::vector<CurvePoint>& points, bool rpmCurve) {
+bool SetCurve(const std::vector<CurvePoint>& points, bool rpmCurve) {
     char buffer[64];
     std::string json = rpmCurve ? "{\"cmd\":\"setRpmCurve\",\"points\":[" : "{\"cmd\":\"setCurve\",\"points\":[";
     bool first = true;
@@ -531,22 +425,22 @@ bool IpcClient::SetCurve(const std::vector<CurvePoint>& points, bool rpmCurve) {
     return Send(json);
 }
 
-bool IpcClient::RequestReconnect() { return Send("{\"cmd\":\"reconnect\"}"); }
+bool RequestReconnect() { return Send("{\"cmd\":\"reconnect\"}"); }
 
-bool IpcClient::RequestState() { return Send("{\"cmd\":\"getState\"}"); }
+bool RequestState() { return Send("{\"cmd\":\"getState\"}"); }
 
-bool IpcClient::ScanBleDevices() { return Send("{\"cmd\":\"scanBle\"}"); }
+bool ScanBleDevices() { return Send("{\"cmd\":\"scanBle\"}"); }
 
-bool IpcClient::ListPorts() { return Send("{\"cmd\":\"listPorts\"}"); }
+bool ListPorts() { return Send("{\"cmd\":\"listPorts\"}"); }
 
-bool IpcClient::ListGpus() { return Send("{\"cmd\":\"listGpus\"}"); }
+bool ListGpus() { return Send("{\"cmd\":\"listGpus\"}"); }
 
-bool IpcClient::SetSystem(const std::string& key, const std::string& valueJson) {
+bool SetSystem(const std::string& key, const std::string& valueJson) {
     std::string json = "{\"cmd\":\"setSystem\",\"key\":\"" + key + "\",\"value\":" + valueJson + "}";
     return Send(json);
 }
 
-bool IpcClient::SetAutostart(bool enabled) {
+bool SetAutostart(bool enabled) {
     return Send(std::string("{\"cmd\":\"setAutostart\",\"value\":") + (enabled ? "true" : "false") + "}");
 }
 
