@@ -54,6 +54,12 @@ public sealed class FanControlRuntime : IAsyncDisposable
     private FanControlMode? _lastMode;
     private TemperatureSource? _lastSource;
     private bool _bleWasConnected;
+    // 本次断链是否已经通知过：一次断线只弹一条气泡，重连成功后再复位
+    private bool _bleOutageNotified;
+    // 这条连接是否真的成功写出过数据：没写出过就断的算「没连上」，不弹断连通知
+    private bool _bleLinkVerified;
+    // 上次断连通知的时间戳：设备反复连上又掉线时，一分钟内不重复弹
+    private long _lastBleNotifyTicks;
 
     public FanControlRuntime(
         AppState appState,
@@ -174,6 +180,12 @@ public sealed class FanControlRuntime : IAsyncDisposable
 
     /// <summary>蓝牙连接状态变化时触发（true=已连接，false=断开）。</summary>
     public event EventHandler<bool>? BleConnectionChanged;
+
+    /// <summary>
+    /// 蓝牙链路不可用（运行中断开，或重连连续失败）时触发：一次断线只触发一次，
+    /// 重连成功后复位。断连通知订阅它，而不是 BleConnectionChanged —— 后者在「从来没连上」时不会触发。
+    /// </summary>
+    public event EventHandler? BleDisconnected;
 
     /// <summary>温度采样开始失败（上次成功/无错误）时触发，用于异常通知。</summary>
     public event EventHandler? TemperatureErrorOccurred;
@@ -528,10 +540,22 @@ public sealed class FanControlRuntime : IAsyncDisposable
             await EnsureCommConfigAsync(config);
             var channel = GetChannel(config.CommunicationType);
 
-            // 连接状态变化事件（断连通知用）
+            // 连接状态变化事件（托盘状态用）；断开时只在「这条连接真的通过」时补一次通知
             if (channel.IsConnected != _bleWasConnected)
             {
                 _bleWasConnected = channel.IsConnected;
+                if (_bleWasConnected)
+                {
+                    _bleLinkVerified = false;
+                    _bleOutageNotified = false;
+                }
+                else if (_bleLinkVerified)
+                {
+                    // 连接成功过、写过数据，这次才算「断开」：连都没连上就失败不弹
+                    _bleLinkVerified = false;
+                    RaiseBleDisconnectedOnce();
+                }
+
                 try
                 {
                     BleConnectionChanged?.Invoke(this, _bleWasConnected);
@@ -551,7 +575,10 @@ public sealed class FanControlRuntime : IAsyncDisposable
             _forceReconnect = false;
             if (forceReconnect)
             {
+                // 手动「重建连接」不算掉线：清掉连接标记，避免下一轮误判成断开而弹通知
                 await DisconnectChannelsAsync();
+                _bleWasConnected = false;
+                _bleLinkVerified = false;
                 channel = GetChannel(config.CommunicationType);
             }
 
@@ -561,6 +588,8 @@ public sealed class FanControlRuntime : IAsyncDisposable
                 {
                     // 连接状态下每个轮询周期都下发时间：固件重启/首条丢失时也能在下一轮重新校时
                     await channel.SendTimeAsync(DateTime.Now, cancellationToken);
+                    // 有一次写入成功，说明链路是真的通的：这条连接断开时才值得通知
+                    _bleLinkVerified = true;
 
                     if (!float.IsNaN(_latestSmoothedPwm))
                     {
@@ -594,6 +623,20 @@ public sealed class FanControlRuntime : IAsyncDisposable
             {
                 SetConnectionState(CommunicationState.Reconnecting);
                 SetCommError(ex);
+
+                // 写入失败说明链路已经不可用（设备关机、走远、固件重启）：
+                // 不把通道标成断开的话 IsConnected 会一直是 true —— 既不会重连，也永远不会触发断连通知。
+                if (channel.IsConnected)
+                {
+                    try
+                    {
+                        await channel.DisconnectAsync(cancellationToken).ConfigureAwait(false);
+                    }
+                    catch
+                    {
+                        // 释放失败不影响下一轮重连
+                    }
+                }
             }
 
             // 等待下个周期；配置变更时立即退出等待，马上按新配置重连
@@ -714,6 +757,7 @@ public sealed class FanControlRuntime : IAsyncDisposable
 
         await DisconnectChannelsAsync();
         _bleWasConnected = false;
+        _bleLinkVerified = false;
         SetConnectionState(CommunicationState.Waiting);
     }
 
@@ -762,6 +806,33 @@ public sealed class FanControlRuntime : IAsyncDisposable
 
         LastCommError = null;
         LastCommErrorInfo = null;
+    }
+
+    /// <summary>一次断线只通知一次：重连成功后由连接状态跳变复位。</summary>
+    private void RaiseBleDisconnectedOnce()
+    {
+        // 通知只针对蓝牙链路：串口掉线不进系统通知
+        if (_appState.Current.CommunicationType != CommunicationType.Ble)
+        {
+            return;
+        }
+
+        var now = Environment.TickCount64;
+        if (_bleOutageNotified || now - _lastBleNotifyTicks < 60_000)
+        {
+            return;
+        }
+
+        _bleOutageNotified = true;
+        _lastBleNotifyTicks = now;
+        try
+        {
+            BleDisconnected?.Invoke(this, EventArgs.Empty);
+        }
+        catch
+        {
+            // 订阅方异常不影响通信循环
+        }
     }
 
     private void SetConnectionState(CommunicationState state)

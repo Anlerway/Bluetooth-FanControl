@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using FanControl.Host.Ui;
 using FanControl.Service.Config;
 using FanControl.Service.Host;
+using FanControl.Shared.Contracts;
 using FanControl.Service.Tray;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -138,19 +139,29 @@ internal static class Program
         };
 
         runtime.ConnectionStateChanged += (_, _) => UpdateTray(tray, runtime);
-        runtime.BleConnectionChanged += (_, connected) =>
+        runtime.BleConnectionChanged += (_, _) => UpdateTray(tray, runtime);
+        // 断连通知：只有「连接成功、写过数据后首次断开」才会触发（见 FanControlRuntime）
+        runtime.BleDisconnected += (_, _) =>
         {
-            UpdateTray(tray, runtime);
-            if (!connected && runtime.CurrentConfig.NotifyOnBleDisconnect)
+            if (!runtime.CurrentConfig.NotifyOnBleDisconnect)
             {
-                tray.ShowNotification(TrayStrings.AppTitle, TrayStrings.Disconnected);
+                return;
             }
+
+            // 自动重连关掉时别说「正在尝试重连」，文案要跟开关一致
+            var text = runtime.CurrentConfig.AutoReconnectBle
+                ? TrayStrings.Disconnected
+                : TrayStrings.DisconnectedNoRetry;
+            tray.ShowNotification(TrayStrings.AppTitle, text, ErrorSeverity.Warning);
         };
         runtime.TemperatureErrorOccurred += (_, _) =>
         {
             if (runtime.CurrentConfig.NotifyOnTemperatureError)
             {
-                tray.ShowNotification(TrayStrings.TemperatureErrorTitle, runtime.LastError ?? TrayStrings.TemperatureErrorFallback);
+                tray.ShowNotification(
+                    TrayStrings.TemperatureErrorTitle,
+                    runtime.LastError ?? TrayStrings.TemperatureErrorFallback,
+                    ErrorSeverity.Warning);
             }
         };
 

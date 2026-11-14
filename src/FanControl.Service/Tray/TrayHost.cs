@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using FanControl.Shared.Contracts;
 
 namespace FanControl.Service.Tray;
 
@@ -31,10 +32,10 @@ public sealed class TrayHost : IDisposable
         _window?.SetStatus(text);
     }
 
-    /// <summary>弹出托盘气泡通知（跨线程安全）。</summary>
-    public void ShowNotification(string title, string text)
+    /// <summary>弹出托盘气泡通知（跨线程安全）。severity 决定气泡图标：提示/验证为信息图标，异常黄色三角，错误红色叉。</summary>
+    public void ShowNotification(string title, string text, ErrorSeverity severity = ErrorSeverity.Warning)
     {
-        _window?.ShowNotification(title, text);
+        _window?.ShowNotification(title, text, severity);
     }
 
     public void Dispose()
@@ -81,7 +82,7 @@ internal sealed class TrayWindow
     private IntPtr _hwnd;
     private IntPtr _icon;
     private string _tip = "FanControl";
-    private (string Title, string Text)? _pendingNotification;
+    private (string Title, string Text, ErrorSeverity Severity)? _pendingNotification;
     private bool _autostartEnabled;
     private bool _iconAdded;
     private bool _shutdownRequested;
@@ -136,11 +137,11 @@ internal sealed class TrayWindow
         PostIfReady(WmSetStatus);
     }
 
-    public void ShowNotification(string title, string text)
+    public void ShowNotification(string title, string text, ErrorSeverity severity = ErrorSeverity.Warning)
     {
         lock (_sync)
         {
-            _pendingNotification = (title, text);
+            _pendingNotification = (title, text, severity);
         }
 
         PostIfReady(WmShowNotify);
@@ -365,7 +366,7 @@ internal sealed class TrayWindow
 
     private void ShowBalloon()
     {
-        (string Title, string Text)? payload;
+        (string Title, string Text, ErrorSeverity Severity)? payload;
         lock (_sync)
         {
             payload = _pendingNotification;
@@ -381,7 +382,7 @@ internal sealed class TrayWindow
         data.uFlags = Native.NifInfo;
         data.szInfoTitle = payload.Value.Title;
         data.szInfo = payload.Value.Text;
-        data.dwInfoFlags = Native.NiifWarning;
+        data.dwInfoFlags = InfoFlags(payload.Value.Severity);
         data.uTimeout = 3000;
         Native.ShellNotifyIcon(Native.NimModify, ref data);
     }
@@ -405,6 +406,14 @@ internal sealed class TrayWindow
             szInfoTitle = string.Empty,
         };
     }
+
+    /// <summary>通知图标的形状跟鞋错误分档走：提示/验证 = 信息，异常 = 黄色三角，错误 = 红色叉。</summary>
+    private static uint InfoFlags(ErrorSeverity severity) => severity switch
+    {
+        ErrorSeverity.Notice or ErrorSeverity.Validation => Native.NiifInfo,
+        ErrorSeverity.Error => Native.NiifError,
+        _ => Native.NiifWarning,
+    };
 
     private static IntPtr LoadProcessIcon()
     {
@@ -474,7 +483,9 @@ internal static class Native
     public const uint NimAdd = 0;
     public const uint NimModify = 1;
     public const uint NimDelete = 2;
+    public const uint NiifInfo = 0x00000001;
     public const uint NiifWarning = 0x00000002;
+    public const uint NiifError = 0x00000003;
 
     public const uint MfString = 0x00000000;
     public const uint MfChecked = 0x00000008;
