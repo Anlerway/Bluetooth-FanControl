@@ -308,10 +308,12 @@ void FillState(const JValue& node, State& state) {
     state.errorCode = Str(node.Get("errorCode"));
     state.errorArg1 = Str(node.Get("errorArg1"));
     state.errorArg2 = Str(node.Get("errorArg2"));
+    if (const JValue* severity = node.Get("errorSeverity")) state.errorSeverity = static_cast<int>(Num(severity));
     state.commError = Str(node.Get("commError"));
     state.commErrorCode = Str(node.Get("commErrorCode"));
     state.commErrorArg1 = Str(node.Get("commErrorArg1"));
     state.commErrorArg2 = Str(node.Get("commErrorArg2"));
+    if (const JValue* severity = node.Get("commErrorSeverity")) state.commErrorSeverity = static_cast<int>(Num(severity));
     state.connected = Bool(node.Get("connected"));
     state.autostart = Bool(node.Get("autostart"));
     state.logEnabled = Bool(node.Get("logEnabled"), state.logEnabled);
@@ -364,6 +366,7 @@ bool ParseMessage(const std::string& text, Message& message) {
     if (const JValue* code = root.Get("code")) message.errorCode = Str(code);
     if (const JValue* arg1 = root.Get("arg1")) message.errorArg1 = Str(arg1);
     if (const JValue* arg2 = root.Get("arg2")) message.errorArg2 = Str(arg2);
+    if (const JValue* severity = root.Get("severity")) message.severity = static_cast<int>(Num(severity));
     if (const JValue* config = root.Get("config")) {
         FillConfig(*config, message.config);
         message.hasConfig = true;

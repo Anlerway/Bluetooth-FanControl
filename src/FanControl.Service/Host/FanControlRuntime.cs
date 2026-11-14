@@ -456,7 +456,8 @@ public sealed class FanControlRuntime : IAsyncDisposable
                 var firstError = LastError is null;
                 LastError = ex.Message;
                 LastErrorInfo = (ex as FanControlException)?.Error ?? ErrorInfo.Of("runtime.samplingFailed", ex.Message);
-                _logger.LogWarning(ex, "温度采样/控制计算失败（数据源 {Source}）。", _appState.Current.TemperatureSource);
+                // 采样失败按「异常」记：数据源临时读不到，后台下一轮自己重试
+                ErrorLog.Write(_logger, LastErrorInfo, ex, $"数据源 {_appState.Current.TemperatureSource}");
 
                 if (firstError)
                 {
@@ -746,7 +747,8 @@ public sealed class FanControlRuntime : IAsyncDisposable
 
         LastCommError = ex.Message;
         LastCommErrorInfo = info;
-        _logger.LogWarning("通信失败：{Message}", ex.Message);
+        // 通信链路失败按「异常」记：同一原因只写一条，避免重连周期刷日志
+        ErrorLog.Write(_logger, info);
     }
 
     private void ClearCommError()

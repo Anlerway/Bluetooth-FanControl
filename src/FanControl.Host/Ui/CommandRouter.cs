@@ -5,6 +5,7 @@ using System.Text.Encodings.Web;
 using System.Text.Json;
 using FanControl.Service.Communication;
 using FanControl.Service.Host;
+using FanControl.Service.Logging;
 using FanControl.Service.Tray;
 using FanControl.Shared.Contracts;
 using FanControl.Shared.Models;
@@ -245,6 +246,7 @@ internal sealed class CommandRouter : IAsyncDisposable
         var key = keyElement.GetString() ?? string.Empty;
         if (!ConfigPatch.TryApply(_runtime.CurrentConfig, key, valueElement, out var updated, out var error))
         {
+            LogRejection(error);
             Send(Error(error));
             return;
         }
@@ -277,6 +279,7 @@ internal sealed class CommandRouter : IAsyncDisposable
             : ConfigPatch.TrySetCurve(_runtime.CurrentConfig, points, out updated, out error);
         if (!applied)
         {
+            LogRejection(error);
             Send(Error(error));
             return;
         }
@@ -344,6 +347,7 @@ internal sealed class CommandRouter : IAsyncDisposable
         var error = await _system.ApplyAsync(key, value).ConfigureAwait(false);
         if (error is not null)
         {
+            LogRejection(error);
             Send(Error(error));
             return;
         }
@@ -414,13 +418,23 @@ internal sealed class CommandRouter : IAsyncDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "应用配置失败。");
-            Send(Error(ErrorInfo.Of("config.applyFailed", "应用配置失败：" + ex.Message, ex.Message)));
+            var info = ErrorInfo.Of("config.applyFailed", "应用配置失败：" + ex.Message, ex.Message);
+            ErrorLog.Write(_logger, info, ex);
+            Send(Error(info));
             return;
         }
 
         Send(StateJson.BuildConfig(_runtime, _autostart, _system.Current));
         Send(Reply(new { @event = "ok", cmd = "set" }));
+    }
+
+    /// <summary>拒绝一条命令时记日志：验证错误写 [验证错误]，其余按错误码级别写。</summary>
+    private void LogRejection(ErrorInfo? info)
+    {
+        if (info is not null)
+        {
+            ErrorLog.Write(_logger, info);
+        }
     }
 
     private static void Send(string json) => UiBridge.Push(json);
@@ -436,6 +450,8 @@ internal sealed class CommandRouter : IAsyncDisposable
         code = info?.Code ?? "error.generic",
         arg1 = info?.Arg1,
         arg2 = info?.Arg2,
+        // 0 提示 / 1 异常 / 2 错误 / 3 验证错误，界面据此上色并加前缀
+        severity = (int)(info?.Severity ?? ErrorSeverity.Error),
         message = info?.Message ?? string.Empty,
     });
 

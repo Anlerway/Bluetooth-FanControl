@@ -3,6 +3,7 @@ using System.Text;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using FanControl.Service.Host;
+using FanControl.Shared.Contracts;
 using FanControl.Shared.Enums;
 using FanControl.Shared.Models;
 
@@ -10,7 +11,7 @@ namespace FanControl.Host.Ui;
 
 /// <summary>
 /// 把运行时快照序列化成界面进程消费的 JSON。字段名固定为 camelCase，
-/// C++ 客户端按名字取值，两边改动必须同步（协议见 docs/IPC-PROTOCOL.md）。
+/// C++ 客户端按名字取值，两边改动必须同步（协议见 docs/PROTOCOL.md）。
 /// </summary>
 internal static class StateJson
 {
@@ -118,11 +119,14 @@ internal static class StateJson
         writer.WriteString("errorCode", error?.Code ?? string.Empty);
         writer.WriteString("errorArg1", error?.Arg1 ?? string.Empty);
         writer.WriteString("errorArg2", error?.Arg2 ?? string.Empty);
+        // 0 提示 / 1 异常 / 2 错误 / 3 验证错误
+        writer.WriteNumber("errorSeverity", (int)(error?.Severity ?? ErrorSeverity.Error));
         var commError = runtime.LastCommErrorInfo;
         writer.WriteString("commError", runtime.LastCommError ?? string.Empty);
         writer.WriteString("commErrorCode", commError?.Code ?? string.Empty);
         writer.WriteString("commErrorArg1", commError?.Arg1 ?? string.Empty);
         writer.WriteString("commErrorArg2", commError?.Arg2 ?? string.Empty);
+        writer.WriteNumber("commErrorSeverity", (int)(commError?.Severity ?? ErrorSeverity.Error));
         writer.WriteBoolean("autostart", autostart);
         writer.WriteBoolean("logEnabled", system?.LogEnabled ?? true);
         writer.WriteString("userDataLocation", (system?.UserDataLocation ?? ConfigLocation.AppData).ToString());

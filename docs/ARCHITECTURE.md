@@ -116,6 +116,20 @@ LibreHardwareMonitor 的模块是内存大头：只开 CPU 时私有 35 MB / 工
 - 界面 → 宿主：界面把命令序列化成 `{"cmd":"set","key":"theme","value":"\"Dark\""}` 这样的字符串，通过 `FcUiSetCommandSink` 注册的回调交给 `CommandRouter.HandleAsync`（回调在界面线程，宿主立刻转到线程池）。
 - 命令与帧格式与 1.4.0 的命名管道完全一致，字段见 [PROTOCOL.md](PROTOCOL.md)；区别只是传输层从管道换成了一次函数调用。
 - 可用命令：`hello` / `getState` / `set` / `setSystem` / `setCurve` / `setRpmCurve` / `reconnect` / `scanBle` / `listPorts` / `listGpus` / `setAutostart`。
+## 日志
+
+日志写在 `<用户数据目录>\Logs\fancontrol-YYYYMMDD.log`（`userDataLocation` 决定根目录，`system.json` 的 `logEnabled` 决定是否落盘），每行格式：
+
+```
+21:17:48.512 [异常] [FanControl.Service.Host.FanControlRuntime] ble.writeFailed：BLE 写入失败（HRESULT 0x80070001）。
+```
+
+行首方括号是级别，与界面上的四档一一对应（提示 / 异常 / 错误 / 验证错误）：
+
+- 结构化错误走 `src/FanControl.Service/Logging/ErrorLog.cs`：`ErrorLog.Write(logger, info, ex, context)` 按 `ErrorInfo.Severity` 落成 Information / Warning / Error，并通过 `ISeverityTag` 把级别名塞进行首标签，所以验证错误在日志里是 `[验证错误]` 而不是笼统的 Warning；
+- 普通日志按 `LogLevel` 映射：调试 / 提示（Information）/ 异常（Warning）/ 错误（Error）/ 严重（Critical）；
+- `FileLoggerProvider` 从 `LogLevel.Information` 起落盘（1.4.0 之前只收 Warning 及以上），因此提示级也进文件；
+- 采样失败、通信失败、命令被拒三类都会写一条，`context` 参数补来源（数据源名等）。
 ## 本地化
 
 - 语言是配置项（`AppConfig.Language`，`zh-CN` / `en-US`），存在后台的配置文件里；**后台是唯一写盘方**，界面只是发 `{"cmd":"set","key":"language"}`。

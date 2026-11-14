@@ -55,11 +55,14 @@ struct State {
     std::wstring errorCode;
     std::wstring errorArg1;
     std::wstring errorArg2;
+    // 0 提示 / 1 异常 / 2 错误 / 3 验证错误
+    int errorSeverity = 2;
     // 通信链路（连接/写入/校时）最近的失败，与温度采样错误分开上报
     std::wstring commError;
     std::wstring commErrorCode;
     std::wstring commErrorArg1;
     std::wstring commErrorArg2;
+    int commErrorSeverity = 2;
     bool connected = false;
     bool autostart = false;
     // SystemConfig 侧（与 AppConfig 分开存，界面上一组「数据目录 / 日志」就是它）
@@ -84,6 +87,7 @@ struct Message {
     std::wstring errorCode;
     std::wstring errorArg1;
     std::wstring errorArg2;
+    int severity = 2;
     // scanBle / listPorts / listGpus 的候选列表
     std::vector<DialogItem> items;
     bool hasItems = false;

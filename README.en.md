@@ -49,7 +49,8 @@ A full remake built on top of the 垃圾研究社 open-source hardware:
 - **Adjustable temperature-fan curves**: 5 control modes (manual / CPU temp / GPU temp / mixed max / mixed average / target RPM), temperature and RPM curves edited side by side, applied and saved instantly with a 32-step undo, plus fan-curve smoothing;
 - **Auto-reconnect**: BLE / COM dual channels; automatically retries reconnection on disconnect, with manual reconnect support;
 - **Auto-start**: starts quietly in the tray at logon and connects over Bluetooth directly;
-- **Control dashboard**: live temperature / output PWM / CPU fan speed tiles plus custom trend charts (CPU / GPU / output PWM), and a 4-minute output-PWM trace on the curve page;
+- **Control dashboard**: live temperature / output PWM / CPU fan speed tiles plus custom trend charts (CPU / GPU / output PWM / CPU fan speed, the RPM line on its own right axis), and a 4-minute output-PWM trace on the curve page;
+- **Error severity**: notice / warning / error / validation, colour-coded in the status line and toasts, and tagged the same way on every log line;
 - **Tray resident**: tray temperature preview, disconnect/error notifications, close-to-tray.
 
 ## Software Settings

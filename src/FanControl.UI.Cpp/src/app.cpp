@@ -64,7 +64,10 @@ Theme MakeTheme(bool dark) {
         t.cpuLine = Col(0x3AAEEF);
         t.gpuLine = Col(0x00C8A0);
         t.pwmLine = Col(0xE8A33D);
+        t.rpmLine = Col(0xE06C9F);
         t.danger = Col(0xFF99A4);
+        t.warning = Col(0xE8B84B);
+        t.validation = Col(0xC59BFF);
         t.ok = Col(0x6CCB5F);
     } else {
         t.windowBg = Col(0xF3F3F3);
@@ -87,11 +90,35 @@ Theme MakeTheme(bool dark) {
         t.cpuLine = Col(0x0A84C8);
         t.gpuLine = Col(0x0E8A6E);
         t.pwmLine = Col(0xB86B00);
+        t.rpmLine = Col(0xB03A6E);
         t.danger = Col(0xC42B1C);
+        t.warning = Col(0x8A6100);
+        t.validation = Col(0x6E4BC4);
         t.ok = Col(0x0F7B0F);
     }
     return t;
 }
+
+namespace {
+// 错误的四个级别：0 提示 / 1 异常 / 2 错误 / 3 验证错误（与后台 ErrorSeverity 一致）
+const wchar_t* SeverityLabel(int severity) {
+    switch (severity) {
+    case 0: return fc::T(L"提示");
+    case 1: return fc::T(L"异常");
+    case 3: return fc::T(L"验证错误");
+    default: return fc::T(L"错误");
+    }
+}
+
+D2D1_COLOR_F SeverityColor(const Theme& theme, int severity) {
+    switch (severity) {
+    case 0: return theme.textSecondary;
+    case 1: return theme.warning;
+    case 3: return theme.validation;
+    default: return theme.danger;
+    }
+}
+} // namespace
 
 bool App::Init(HWND hwnd) {
     hwnd_ = hwnd;
@@ -554,52 +581,71 @@ void App::DrawDashboard(float x, float y, float w) {
     StrokeRound(card, 8.0f, theme_.cardBorder);
     Text(fc::T(L"最近 4 分钟"), D2D1::RectF(x + 16, y + 12, x + w - 200, y + 34), fBodyStrong_,
          theme_.textPrimary);
-    // 图例
-    // 「输出 PWM」比原来的 “PWM” 长，图例按文字宽度排，不能再写死 66
-    float lx = x + w - 250;
-    struct Leg { const wchar_t* name; D2D1_COLOR_F color; };
-    Leg legs[3] = { { L"CPU", theme_.cpuLine }, { L"GPU", theme_.gpuLine }, { fc::T(L"输出 PWM"), theme_.pwmLine } };
+    // 图例：四项（CPU / GPU / 输出 PWM / CPU 风扇转速），按文字宽度从右往左排，避免写死坐标被挤出去
+    struct Leg { const wchar_t* name; D2D1_COLOR_F color; float width; };
+    Leg legs[4] = { { L"CPU", theme_.cpuLine, 0.0f }, { L"GPU", theme_.gpuLine, 0.0f },
+                    { fc::T(L"输出 PWM"), theme_.pwmLine, 0.0f }, { fc::T(L"CPU 风扇转速"), theme_.rpmLine, 0.0f } };
+    float legendW = 0.0f;
+    for (auto& leg : legs) {
+        leg.width = MeasureText(leg.name, fSmall_);
+        legendW += 12.0f + leg.width + 18.0f;
+    }
+    float lx = x + w - 16.0f - (legendW - 18.0f);
     for (auto& leg : legs) {
         FillRound(D2D1::RectF(lx, y + 20, lx + 8, y + 28), 4.0f, leg.color);
-        const float lw = MeasureText(leg.name, fSmall_);
-        Text(leg.name, D2D1::RectF(lx + 12, y + 14, lx + 20 + lw, y + 34), fSmall_, theme_.textSecondary);
-        lx += lw + 34;
+        Text(leg.name, D2D1::RectF(lx + 12, y + 14, lx + 20 + leg.width, y + 34), fSmall_, theme_.textSecondary);
+        lx += 12.0f + leg.width + 18.0f;
     }
 
-    D2D1_RECT_F plot = D2D1::RectF(x + 44, y + 48, x + w - 20, y + h - 28);
+    // 左轴 0–100（温度 °C 与输出 PWM %），右轴给 CPU 风扇转速：峰值向上取整到 1000 RPM，至少 2000
+    double rpmPeak = 0.0;
+    for (const auto& point : rpmHist_) rpmPeak = std::max(rpmPeak, point.second);
+    const double rpmAxisMax = std::max(2000.0, std::ceil(rpmPeak / 1000.0) * 1000.0);
+
+    D2D1_RECT_F plot = D2D1::RectF(x + 44, y + 48, x + w - 44, y + h - 28);
     for (int i = 0; i <= 4; ++i) {  // 水平网格
         float gy = plot.top + (plot.bottom - plot.top) * i / 4.0f;
         Line(plot.left, gy, plot.right, gy, theme_.gridLine);
     }
-    auto drawSeries = [&](const std::deque<std::pair<double, double>>& data, D2D1_COLOR_F color) {
+    auto drawSeries = [&](const std::deque<std::pair<double, double>>& data, D2D1_COLOR_F color,
+                          double maxValue, float lineWidth) {
         if (data.size() < 2) return;
         float step = (plot.right - plot.left) / (kHistoryPoints - 1);
         for (size_t i = 1; i < data.size(); ++i) {
             float x1 = plot.left + (i - 1) * step;
             float x2 = plot.left + i * step;
-            float y1 = plot.bottom - static_cast<float>(data[i - 1].second) / 100.0f * (plot.bottom - plot.top);
-            float y2 = plot.bottom - static_cast<float>(data[i].second) / 100.0f * (plot.bottom - plot.top);
-            Line(x1, y1, x2, y2, color, 1.6f);
+            float y1 = plot.bottom - static_cast<float>(data[i - 1].second / maxValue) * (plot.bottom - plot.top);
+            float y2 = plot.bottom - static_cast<float>(data[i].second / maxValue) * (plot.bottom - plot.top);
+            Line(x1, y1, x2, y2, color, lineWidth);
         }
     };
-    drawSeries(cpuHist_, theme_.cpuLine);
-    drawSeries(gpuHist_, theme_.gpuLine);
-    drawSeries(pwmHist_, theme_.pwmLine);
+    drawSeries(cpuHist_, theme_.cpuLine, 100.0, 1.6f);
+    drawSeries(gpuHist_, theme_.gpuLine, 100.0, 1.6f);
+    drawSeries(pwmHist_, theme_.pwmLine, 100.0, 1.6f);
+    drawSeries(rpmHist_, theme_.rpmLine, rpmAxisMax, 1.4f);
 
     TextCentered(L"100", D2D1::RectF(x + 8, plot.top - 8, x + 40, plot.top + 8), fSmall_, theme_.textTertiary);
     TextCentered(L"0", D2D1::RectF(x + 8, plot.bottom - 8, x + 40, plot.bottom + 8), fSmall_, theme_.textTertiary);
+    TextCentered(Fmt(L"%d", static_cast<int>(rpmAxisMax)),
+                 D2D1::RectF(x + w - 40, plot.top - 8, x + w - 4, plot.top + 8), fSmall_, theme_.rpmLine);
+    TextCentered(L"0", D2D1::RectF(x + w - 40, plot.bottom - 8, x + w - 4, plot.bottom + 8), fSmall_,
+                 theme_.rpmLine);
     y += h + 14.0f;
 
     // 最近错误：与 1.3.0 一样只在真的出错时出现一行，不再单独占一张卡
     std::wstring recentError;
+    int recentSeverity = snap_.errorSeverity;
     if (!snap_.lastError.empty()) {
         recentError = fc::ErrorText(snap_.errorCode, snap_.errorArg1, snap_.errorArg2, snap_.lastError);
     } else if (!snap_.commError.empty()) {
         recentError = fc::ErrorText(snap_.commErrorCode, snap_.commErrorArg1, snap_.commErrorArg2, snap_.commError);
+        recentSeverity = snap_.commErrorSeverity;
     }
     if (!recentError.empty()) {
-        Text(std::wstring(fc::T(L"最近错误")) + L" · " + snap_.commMode + L" · " + recentError,
-             D2D1::RectF(x + 4, y, x + w - 4, y + 22), fSmall_, theme_.danger);
+        // 级别决定前缀与颜色：提示（灰）/ 异常（琥珀）/ 错误（红）/ 验证错误（紫）
+        Text(std::wstring(fc::T(L"最近错误")) + L" · " + SeverityLabel(recentSeverity) + L" · " + snap_.commMode +
+                 L" · " + recentError,
+             D2D1::RectF(x + 4, y, x + w - 4, y + 22), fSmall_, SeverityColor(theme_, recentSeverity));
         y += 26.0f;
     }
     contentHeight_ = y + 16.0f;
@@ -1273,10 +1319,10 @@ void App::Paint() {
     DrawBleDialog(size.width, size.height);
 
     if (!toast_.empty() && GetTickCount() < toastUntil_) {
-        float tw = 240.0f;
+        float tw = 300.0f;
         D2D1_RECT_F r = D2D1::RectF(size.width - tw - 24, size.height - 88, size.width - 24, size.height - 56);
         FillRound(r, 4.0f, dark_ ? Col(0x3A3A3A) : Col(0xE5E5E5));
-        TextCentered(toast_, r, fSmall_, theme_.textPrimary);
+        TextCentered(toast_, r, fSmall_, SeverityColor(theme_, toastSeverity_));
     }
 
     rt_->EndDraw();
@@ -1308,6 +1354,7 @@ void App::BuildHistory(float) {
     push(cpuHist_, snap_.cpu);
     push(gpuHist_, snap_.gpu);
     push(pwmHist_, static_cast<double>(snap_.pwm));
+    push(rpmHist_, static_cast<double>(snap_.rpm));
 }
 
 // ---------------- input ----------------
@@ -1575,8 +1622,10 @@ void App::OnIpcMessage(void* payload) {
     if (message->hasConfig) ApplyConfig(message->config);
     if (message->hasState) ApplyState(message->state);
     if (message->event == L"error") {
-        // 后台只给 code + 参数，文案由界面按当前语言拼
-        toast_ = fc::ErrorText(message->errorCode, message->errorArg1, message->errorArg2, message->error);
+        // 后台只给 code + 参数，文案由界面按当前语言拼；前缀与颜色按级别（提示/异常/错误/验证错误）
+        toastSeverity_ = message->severity;
+        toast_ = std::wstring(SeverityLabel(message->severity)) + L"：" +
+                 fc::ErrorText(message->errorCode, message->errorArg1, message->errorArg2, message->error);
         toastUntil_ = GetTickCount() + 4000;
     }
     if (message->event == L"bleDevices" && bleDialogOpen_) {
@@ -1658,10 +1707,12 @@ void App::ApplyState(const fc::State& state) {
     snap_.errorCode = state.errorCode;
     snap_.errorArg1 = state.errorArg1;
     snap_.errorArg2 = state.errorArg2;
+    snap_.errorSeverity = state.errorSeverity;
     snap_.commError = state.commError;
     snap_.commErrorCode = state.commErrorCode;
     snap_.commErrorArg1 = state.commErrorArg1;
     snap_.commErrorArg2 = state.commErrorArg2;
+    snap_.commErrorSeverity = state.commErrorSeverity;
     snap_.connectionState = state.connectionState;
     autostart_ = state.autostart;
     logEnabled_ = state.logEnabled;
@@ -1672,6 +1723,7 @@ void App::ApplyState(const fc::State& state) {
             cpuHist_.emplace_back(0.0, snap_.cpu);
             gpuHist_.emplace_back(0.0, snap_.gpu);
             pwmHist_.emplace_back(0.0, static_cast<double>(snap_.pwm));
+            rpmHist_.emplace_back(0.0, static_cast<double>(snap_.rpm));
         }
     }
     if (state.timestamp - lastSampleMs_ >= 900) {

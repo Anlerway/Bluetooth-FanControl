@@ -56,14 +56,15 @@ public sealed class FileLoggerProvider : ILoggerProvider
         }
     }
 
-    internal void Write(string category, LogLevel level, string message)
+    internal void Write(string category, string tag, string message)
     {
         if (!Volatile.Read(ref _enabled))
         {
             return;
         }
 
-        var line = $"{DateTime.Now:HH:mm:ss.fff} [{level}] [{category}] {message}{Environment.NewLine}";
+        // 方括号里是中文级别名（提示 / 异常 / 错误 / 验证错误），与界面上的四档一致
+        var line = $"{DateTime.Now:HH:mm:ss.fff} [{tag}] [{category}] {message}{Environment.NewLine}";
 
         // 队列满或已关闭时丢弃：日志不能反过来拖慢采样循环
         _queue.Writer.TryWrite(line);
@@ -184,8 +185,8 @@ public sealed class FileLoggerProvider : ILoggerProvider
 
         public bool IsEnabled(LogLevel logLevel)
         {
-            // 仅保留关键日志：Warning / Error / Critical，降低日常日志噪音
-            return logLevel >= LogLevel.Warning;
+            // 从「提示」起就写：四档里的提示对应 Information，再低的调试日志不落盘
+            return logLevel >= LogLevel.Information;
         }
 
         public void Log<TState>(
@@ -206,7 +207,9 @@ public sealed class FileLoggerProvider : ILoggerProvider
                 message += $" {exception}";
             }
 
-            _owner.Write(_category, logLevel, message);
+            // 错误走 ErrorLog 时自带级别标签（验证错误不在 LogLevel 里，只能由状态带过来）
+            var tag = state is ISeverityTag tagged ? tagged.SeverityTag : LevelTags.Of(logLevel);
+            _owner.Write(_category, tag, message);
         }
     }
 }

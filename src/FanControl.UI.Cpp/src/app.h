@@ -31,7 +31,7 @@ struct Theme {
     D2D1_COLOR_F textPrimary, textSecondary, textTertiary;
     D2D1_COLOR_F accent, accentText, controlBg, controlBorder, controlHover;
     D2D1_COLOR_F navHover, navSelected, accentBar;
-    D2D1_COLOR_F chartBg, gridLine, cpuLine, gpuLine, pwmLine, danger, ok;
+    D2D1_COLOR_F chartBg, gridLine, cpuLine, gpuLine, pwmLine, rpmLine, danger, warning, validation, ok;
 };
 
 Theme MakeTheme(bool dark);
@@ -47,10 +47,12 @@ struct Snapshot {
     std::wstring errorCode;
     std::wstring errorArg1;
     std::wstring errorArg2;
+    int errorSeverity = 2;  // 0 提示 / 1 异常 / 2 错误 / 3 验证错误
     std::wstring commError;
     std::wstring commErrorCode;
     std::wstring commErrorArg1;
     std::wstring commErrorArg2;
+    int commErrorSeverity = 2;
 };
 
 enum class Page { Dashboard = 0, Settings, Curve, About };
@@ -214,6 +216,7 @@ private:
     std::deque<std::pair<double, double>> cpuHist_;
     std::deque<std::pair<double, double>> gpuHist_;
     std::deque<std::pair<double, double>> pwmHist_;
+    std::deque<std::pair<double, double>> rpmHist_;
     double t_ = 0.0;
 
     std::vector<Point2> curve_;
@@ -245,6 +248,7 @@ private:
     bool logEnabled_ = true;
     std::wstring userDataLocation_ = L"AppData";
     std::wstring toast_;
+    int toastSeverity_ = 2;
     DWORD toastUntil_ = 0;
 
     // 拖动中的滑块 id 与当前值（空 = 没在拖）

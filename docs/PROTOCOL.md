@@ -32,7 +32,7 @@
 | --- | --- | --- |
 | `hello` | — | 握手，回 `{"event":"hello","protocol":1,"version":"1.4.0"}` |
 | `getState` | — | 立即补一帧 `state` |
-| `set` | `key`、`value` | 改单个配置项；成功回 `{"event":"ok","cmd":"set"}`，失败回 `{"event":"error","code":…,"arg1":…,"arg2":…,"message":…}` |
+| `set` | `key`、`value` | 改单个配置项；成功回 `{"event":"ok","cmd":"set"}`，失败回 `{"event":"error","code":…,"arg1":…,"arg2":…,"message":…,"severity":…}` |
 | `setCurve` / `setRpmCurve` | `points: [[温度, PWM], …]` | 至少 2 点，后台按 x 排序并 clamp 到 0–100 |
 | `reconnect` | — | 强制重建 BLE / COM 连接 |
 | `uiClosed` | — | 界面窗口销毁时发；宿主等 600 ms 后 `SetProcessWorkingSetSize(-1, -1)` 收起工作集 |
@@ -47,10 +47,11 @@
 
 `update` 事件：`state` 取 `checking` / `current`（已是最新）/ `newer`（发现新版本）/ `none`（仓库暂无发布）/ `failed`；`tag` 是 release 的 tag，`url` 是 release 页面，`detail` 是失败原因（异常信息）。版本比较时程序集版本规约成三段再比，避免 `1.4.0.0` 被当成比 `1.4.0` 新。
 
-`state` 字段：`cpu`、`gpu`、`rpm`、`pwm`、`rawPwm`、`mode`、`connectionState`、`connected`、`communicationType`、`deviceName`、`lastError`、`errorCode`、`errorArg1`、`errorArg2`、`commError`、`commErrorCode`、`commErrorArg1`、`commErrorArg2`、`autostart`、`logEnabled`、`userDataLocation`（`AppData` / `ExeDirectory`）、`timestamp`（epoch ms）。
+`state` 字段：`cpu`、`gpu`、`rpm`、`pwm`、`rawPwm`、`mode`、`connectionState`、`connected`、`communicationType`、`deviceName`、`lastError`、`errorCode`、`errorArg1`、`errorArg2`、`errorSeverity`、`commError`、`commErrorCode`、`commErrorArg1`、`commErrorArg2`、`commErrorSeverity`、`autostart`、`logEnabled`、`userDataLocation`（`AppData` / `ExeDirectory`）、`timestamp`（epoch ms）。
 
 - `lastError*` 是**采样线程**的异常（温度/转速读取失败）；
 - `commError*` 是**通信线程**的异常（BLE/串口连不上、写入失败），链路恢复时清空；
+- `errorSeverity` / `commErrorSeverity` 是两类错误各自的级别（0 提示 / 1 异常 / 2 错误 / 3 验证错误，见下节），界面据此给「最近错误」行上色并加前缀；
 - `autostart` 是计划任务的实际状态，界面不自行猜测（托盘里也能改，改完广播 `state`）；
 - `userDataLocation` 改动后要**重启 FanControl** 才切根目录（宿主会把已有 `Config\` 与 `Logs\` 迁到新根），界面在这行副标题里写明「重启后生效」。
 
@@ -59,7 +60,7 @@
 后台不产生面向用户的成品文案（除 `message` 兜底），而是给 `code` + 至多两个参数，界面按当前语言查表拼装：
 
 ```json
-{"event":"error","code":"config.rangeInt","arg1":"100","arg2":"5000","message":"取值必须是 100-5000 之间的整数。"}
+{"event":"error","code":"config.rangeInt","arg1":"100","arg2":"5000","message":"取值必须是 100-5000 之间的整数。","severity":3}
 ```
 
 | 前缀 | code | 参数 |
@@ -73,6 +74,19 @@
 | `curve.` / `runtimeCurve.` | `empty`、`notIncreasing` | — |
 | `autostart.` | `noProcessPath`、`taskFailed` | `taskFailed` arg1=schtasks 退出码 |
 | `error.` | `generic` | 兜底 |
+
+### 错误级别
+
+每条错误都带一个整数级别，`error` 帧里的 `severity`、`state` 里的 `errorSeverity` / `commErrorSeverity` 用的是同一套值（`ErrorInfo.Severity`，定义在 `src/FanControl.Shared/Contracts/ErrorInfo.cs`）：
+
+| 值 | 级别 | 判定 |
+| --- | --- | --- |
+| 0 | 提示 | `ble.notConfigured`：还没在设置里选设备，属正常状态 |
+| 1 | 异常 | 链路临时故障、后台会自己重试：`runtime.samplingFailed`、`comm.failed`，以及 `ble.*` / `com.*`（`notConfigured` 除外） |
+| 2 | 错误 | 需要用户处理或反馈：`config.applyFailed`、`ipc.unknownCommand`、`autostart.*`、`error.generic` |
+| 3 | 验证错误 | 界面提交了非法值、已被拒绝且没有落盘：其余 `config.*` / `curve.*` / `runtimeCurve.*` / `ipc.*` |
+
+`ErrorInfo.SeverityOverride` 可以覆盖按前缀推出来的级别。界面按级别给「最近错误」行与提示条上色（提示灰、异常琥珀、错误红、验证错误紫）并前置级别名；日志侧同一套级别写在行首方括号里，见 `docs/ARCHITECTURE.md` 的日志一节。
 
 界面侧的文案表在 `src/FanControl.UI.Cpp/src/i18n.cpp`（`kErrors[]`，中英各一份，`{0}`/`{1}` 占位）；未登记的 code 退回 `message` 字段。
 
