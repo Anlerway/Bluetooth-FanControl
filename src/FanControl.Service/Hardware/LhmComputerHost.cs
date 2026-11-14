@@ -1,3 +1,4 @@
+using FanControl.Shared.Enums;
 using LibreHardwareMonitor.Hardware;
 
 namespace FanControl.Service.Hardware;
@@ -13,20 +14,67 @@ internal static class LhmComputerHost
     private static readonly object UpdateSync = new();
     private static Computer? _computer;
     private static long _lastUpdateTimestamp;
+    private static bool _cpu;
+    private static bool _gpu;
+    private static bool _board;
+    private static bool _rebuild;
 
-    public static Computer Get()
+    /// <summary>
+    /// 按当前配置决定 LHM 要枚举哪些模块。实测（本机，单一进程）：只开 CPU 时工作集 76 MB，
+    /// 加 GPU 模块后 114 MB（NVAPI/ADL 会跟着加载），再加主板/EC 后 85 MB 起步。
+    /// 默认配置是 CPU 温度走 LHM、GPU 走 nvidia-smi、转速走 ATK ACPI，只需要 CPU 模块。
+    /// </summary>
+    public static void Configure(TemperatureSource temperature, TemperatureSource? gpu, FanSpeedSource fanSpeed)
+    {
+        var needCpu = temperature == TemperatureSource.LibreHardwareMonitor
+                      || fanSpeed == FanSpeedSource.LibreHardwareMonitor
+                      || gpu == TemperatureSource.LibreHardwareMonitor;
+        var needGpu = gpu == TemperatureSource.LibreHardwareMonitor;
+        var needBoard = fanSpeed == FanSpeedSource.LibreHardwareMonitor;
+
+        lock (Sync)
+        {
+            if ((!needCpu || _cpu) && (!needGpu || _gpu) && (!needBoard || _board))
+            {
+                return;
+            }
+
+            _cpu |= needCpu;
+            _gpu |= needGpu;
+            _board |= needBoard;
+
+            // 模块只加不减：切回不依赖 LHM 的数据源时保留句柄，免得反复 Open/Close 抖动。
+            // 真正的重建留到下一次 Get()：配置可能从界面线程改，不能在别的线程正遍历硬件时 Close。
+            _rebuild = _computer is not null;
+        }
+    }
+
+    /// <summary>没有配置任何 LHM 模块时返回 null（这样也不会把 LHM 的原生依赖加载进来）。</summary>
+    public static Computer? Get()
     {
         lock (Sync)
         {
+            if (!_cpu && !_gpu && !_board)
+            {
+                return null;
+            }
+
+            if (_computer is not null && _rebuild)
+            {
+                _computer.Close();
+                _computer = null;
+                _rebuild = false;
+            }
+
             if (_computer is null)
             {
                 _computer = new Computer
                 {
-                    IsCpuEnabled = true,
-                    IsGpuEnabled = true,
-                    // 风扇转速通常挂在主板/嵌入式控制器上，需要开启
-                    IsMotherboardEnabled = true,
-                    IsControllerEnabled = true,
+                    IsCpuEnabled = _cpu,
+                    IsGpuEnabled = _gpu,
+                    // 风扇转速通常挂在主板/嵌入式控制器上
+                    IsMotherboardEnabled = _board,
+                    IsControllerEnabled = _board,
                     IsStorageEnabled = false,
                     IsNetworkEnabled = false,
                 };
@@ -46,13 +94,18 @@ internal static class LhmComputerHost
     {
         lock (UpdateSync)
         {
+            var computer = Get();
+            if (computer is null)
+            {
+                return;
+            }
+
             var now = Environment.TickCount64;
             if (_lastUpdateTimestamp != 0 && now - _lastUpdateTimestamp < UpdateIntervalMilliseconds)
             {
                 return;
             }
 
-            var computer = Get();
             foreach (var hardware in computer.Hardware)
             {
                 hardware.Update();

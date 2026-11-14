@@ -29,6 +29,7 @@ public sealed class FanControlRuntime : IAsyncDisposable
     private readonly FileLoggerProvider _fileLoggerProvider;
     private readonly ILogger<FanControlRuntime> _logger;
     private readonly CancellationTokenSource _cts = new();
+    private int _disposed;
 
     private ITemperatureProvider? _provider;
     private ITemperatureProvider? _gpuProvider;
@@ -183,20 +184,31 @@ public sealed class FanControlRuntime : IAsyncDisposable
     public async Task StartAsync()
     {
         await _appState.InitializeAsync();
+        SyncHardwareModules();
         ApplyLoggingSettings(await _configManager.LoadSystemConfigAsync());
         _logger.LogInformation(
             "监控循环启动：数据源 {Source}，通信 {Channel}，采样 {Sample}ms",
             CurrentConfig.TemperatureSource,
             CurrentConfig.CommunicationType,
             CurrentConfig.PollIntervalMilliseconds);
-        _samplingTask = Task.Run(() => RunSamplingLoopAsync(_cts.Token));
-        _communicationTask = Task.Run(() => RunCommunicationLoopAsync(_cts.Token));
+        // 令牌先取出来：任务真正开始跑之前 CTS 可能已经释放，lambda 里再取会抛 ObjectDisposedException
+        var token = _cts.Token;
+        _samplingTask = Task.Run(() => RunSamplingLoopAsync(token));
+        _communicationTask = Task.Run(() => RunCommunicationLoopAsync(token));
     }
 
     public async Task ApplyConfigAsync(AppConfig config)
     {
         await _appState.ApplyAsync(config).ConfigureAwait(false);
+        SyncHardwareModules();
         RaiseConfigChanged();
+    }
+
+    // LHM 只枚举当前配置用得到的模块：GPU 模块要加载 NVAPI/ADL（+37 MB），主板/EC 再 +8 MB。
+    private void SyncHardwareModules()
+    {
+        var config = CurrentConfig;
+        LhmComputerHost.Configure(config.TemperatureSource, config.GpuTemperatureSource, config.FanSpeedSource);
     }
 
     private void RaiseConfigChanged()
@@ -241,7 +253,20 @@ public sealed class FanControlRuntime : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        _cts.Cancel();
+        // 幂等：容器（provider）与宿主都可能释放同一个单例，第二次进来不能再碰已释放的 CTS
+        if (Interlocked.Exchange(ref _disposed, 1) != 0)
+        {
+            return;
+        }
+
+        try
+        {
+            _cts.Cancel();
+        }
+        catch (ObjectDisposedException)
+        {
+            // 已经释放过：继续往下走，别让退出路径抛异常
+        }
 
         foreach (var task in new[] { _samplingTask, _communicationTask })
         {

@@ -94,6 +94,9 @@ private:
     void Line(float x1, float y1, float x2, float y2, D2D1_COLOR_F c, float width = 1.0f);
     void AddHit(D2D1_RECT_F r, const std::wstring& id);
     bool Hovered(const std::wstring& id) const { return hover_ == id; }
+    // 颜色刷按 RGBA 缓存：每画一条线/一段文字都 CreateSolidColorBrush + Release 会在
+    // 一帧里造出上百个瞬时 COM 对象，私有内存和分配器碎片都白涨。
+    ID2D1SolidColorBrush* Brush(const D2D1_COLOR_F& c);
 
     // pages
     void DrawSidebar(float w, float h);
@@ -128,6 +131,9 @@ private:
     // 连接状态行：右侧是值 + 一个「重新连接」小按钮
     void RowStatus(float x, float y, float w, float h, const std::wstring& id, const std::wstring& title,
                    const std::wstring& subtitle, const std::wstring& value);
+    // 关于页的链接行：标题 + 说明 + 可点的 URL（点击走 url:<href> 命中 id）
+    void RowLink(float x, float y, float w, float h, const std::wstring& title, const std::wstring& subtitle,
+                 const std::wstring& url);
     // 滑块几何：立即模式绘制时记下轨道位置，点击时按 x 反算取值（点哪里就是多少，而不是循环跳档）。
     struct SliderGeom {
         float trackL = 0;
@@ -136,6 +142,11 @@ private:
         double hi = 100;
     };
     double SliderValueAt(const std::wstring& id, int clickX, double fallback) const;
+    // 拖动中的滑块：按下只记 id，移动时连续改本地值，松手才发命令（1.3.0 的 Slider 手感）
+    bool IsSliderRow(const std::wstring& id) const;
+    double SliderRowValue(const std::wstring& id) const;
+    void ApplySliderValue(const std::wstring& id, double value, bool send);
+    void RestoreSliderValue();
     std::unordered_map<std::wstring, SliderGeom> sliders_;
 
     void Switch(float x, float y, bool on);
@@ -158,6 +169,9 @@ private:
     IDWriteTextFormat* fSmall_ = nullptr;
     IDWriteTextFormat* fBig_ = nullptr;
     IDWriteTextFormat* fGlyph_ = nullptr;
+    std::unordered_map<uint32_t, ID2D1SolidColorBrush*> brushes_;
+    std::unordered_map<int, IDWriteTextFormat*> glyphFormats_;
+    mutable std::unordered_map<std::wstring, float> measureCache_;
 
     Theme theme_;
     bool dark_ = true;
@@ -201,6 +215,17 @@ private:
     std::wstring userDataLocation_ = L"AppData";
     std::wstring toast_;
     DWORD toastUntil_ = 0;
+
+    // 拖动中的滑块 id 与当前值（空 = 没在拖）
+    std::wstring sliderDrag_;
+    double sliderValue_ = 0.0;
+
+    // 关于页「检查更新」的状态机（结果由宿主回 update 事件）
+    enum class UpdateState { Idle, Checking, Current, Newer, None, Failed };
+    UpdateState updateState_ = UpdateState::Idle;
+    std::wstring updateTag_;
+    std::wstring updateUrl_;
+    std::wstring updateDetail_;
 
     // ---- 与后台（同进程内的 C# 侧）的交互 ----
     void SendValue(const char* key, const char* valueJson);

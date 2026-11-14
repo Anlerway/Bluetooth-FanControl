@@ -22,7 +22,7 @@
 - 传输：**函数调用**，不是管道。界面导出 C ABI，宿主用 `UiBridge` 加载 `FanControl.UI.dll`：
   - 宿主 → 界面：`FcUiPush(const char* utf8Json)`，一个完整的 UTF-8 JSON 对象，不带长度前缀。
   - 界面 → 宿主：`FcUiSetCommandSink(callback)` 注册的回调，参数同样是完整 JSON 字符串。
-- 宿主每 400 ms 推一帧 `state`（含 `config`），配置改动立即再推一帧；界面连上后宿主先补一帧，界面也会发一次 `hello`。
+- 宿主每 400 ms 组装一帧 `state`（含 `config`）：内容与上一帧相同（除 `timestamp`）就跳过，最多每 1 s 补一次心跳；有变化立即推。界面连上后宿主先补一帧，界面也会发一次 `hello`。
 - 回调在**界面线程**上触发，宿主收到后立刻 `Task.Run` 转到线程池，不在界面线程里做配置写盘或设备 IO。
 - 因为不再跨进程，1.4.0 的 4 字节长度前缀分帧已经没有意义（`FanControl.Shared/Contracts/PipeFraming.cs` 保留但不再使用）。
 
@@ -35,14 +35,17 @@
 | `set` | `key`、`value` | 改单个配置项；成功回 `{"event":"ok","cmd":"set"}`，失败回 `{"event":"error","code":…,"arg1":…,"arg2":…,"message":…}` |
 | `setCurve` / `setRpmCurve` | `points: [[温度, PWM], …]` | 至少 2 点，后台按 x 排序并 clamp 到 0–100 |
 | `reconnect` | — | 强制重建 BLE / COM 连接 |
-| `showWindow` | — | 唤出 / 激活界面窗口 |
+| `uiClosed` | — | 界面窗口销毁时发；宿主等 600 ms 后 `SetProcessWorkingSetSize(-1, -1)` 收起工作集 |
+| `checkUpdate` | — | 查 GitHub 最新 release，先回 `{"event":"update","state":"checking"}`，再回最终结果 |
 | `scanBle` | — | 枚举已配对的 BLE 设备，回 `{"event":"bleDevices","devices":[{"name":…,"mac":…}]}` |
 | `listPorts` | — | 枚举串口，回 `{"event":"ports","ports":["COM3",…]}` |
 | `listGpus` | — | 枚举显卡名（WMI，失败回退 nvidia-smi），回 `{"event":"gpus","gpus":[…]}` |
 | `setAutostart` | `value`（布尔） | 写入/删除计划任务 `FanControl`，成功回 `{"event":"ok","cmd":"setAutostart","autostart":true}` |
 | `setSystem` | `key`、`value` | 改**系统级**配置（存在 system.json，不进 AppConfig）：`logEnabled`（布尔）、`userDataLocation`（`AppData` / `ExeDirectory`）、`maxLogFiles`（1–200）；成功先广播 `state` 再回 `{"event":"ok","cmd":"setSystem"}` |
 
-事件（后台 → 界面）：`hello` / `state` / `config` / `ok` / `error` / `bleDevices` / `ports` / `gpus`。
+事件（宿主 → 界面）：`hello` / `state` / `config` / `ok` / `error` / `bleDevices` / `ports` / `gpus` / `update`。
+
+`update` 事件：`state` 取 `checking` / `current`（已是最新）/ `newer`（发现新版本）/ `none`（仓库暂无发布）/ `failed`；`tag` 是 release 的 tag，`url` 是 release 页面，`detail` 是失败原因（异常信息）。版本比较时程序集版本规约成三段再比，避免 `1.4.0.0` 被当成比 `1.4.0` 新。
 
 `state` 字段：`cpu`、`gpu`、`rpm`、`pwm`、`rawPwm`、`mode`、`connectionState`、`connected`、`communicationType`、`deviceName`、`lastError`、`errorCode`、`errorArg1`、`errorArg2`、`commError`、`commErrorCode`、`commErrorArg1`、`commErrorArg2`、`autostart`、`logEnabled`、`userDataLocation`（`AppData` / `ExeDirectory`）、`timestamp`（epoch ms）。
 

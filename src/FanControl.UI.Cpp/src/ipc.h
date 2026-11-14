@@ -89,6 +89,11 @@ struct Message {
     bool hasItems = false;
     bool autostart = false;
     bool hasAutostart = false;
+    // 关于页「检查更新」结果：state = checking / current / newer / none / failed
+    std::wstring updateState;
+    std::wstring updateTag;
+    std::wstring updateUrl;
+    std::wstring updateDetail;
 };
 
 // 界面是 FanControl.exe 进程里的一个 DLL（单一进程），没有管道：
@@ -113,6 +118,8 @@ bool ScanBleDevices();
 bool ListPorts();
 bool ListGpus();
 bool SetAutostart(bool enabled);
+/// 关于页「检查更新」：宿主去查 GitHub releases，结果以 update 事件推回
+bool CheckUpdate();
 /// SystemConfig（日志开关、数据目录）走单独命令，后台会落盘 system.json
 bool SetSystem(const std::string& key, const std::string& valueJson);
 

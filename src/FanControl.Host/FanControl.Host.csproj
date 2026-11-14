@@ -24,6 +24,12 @@
     <None Include="$(MSBuildThisFileDirectory)..\FanControl.UI.Cpp\build\FanControl.UI.lib" CopyToOutputDirectory="PreserveNewest" Visible="false" Condition="Exists('$(MSBuildThisFileDirectory)..\FanControl.UI.Cpp\build\FanControl.UI.lib')" />
   </ItemGroup>
 
+  <!-- 常驻小工具：让 GC 更积极地归还内存（服务器 GC 关闭 + 内存压力时收缩堆），
+       界面关掉后进程仍住在托盘里，不该一直占着十几 MB 的空堆。 -->
+  <ItemGroup>
+    <RuntimeHostConfigurationOption Include="System.GC.ConserveMemory" Value="7" />
+  </ItemGroup>
+
   <ItemGroup>
     <!-- 测试工程直接覆盖界面协议层（ConfigPatch / StateJson / CommandRouter 是 internal）。 -->
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">

@@ -20,6 +20,11 @@ public sealed class LibreHardwareMonitorTemperatureProvider : ITemperatureProvid
                 // 硬件刷新由 LhmComputerHost 统一节流，与转速 Provider 共享同一次 Update
                 LhmComputerHost.EnsureFresh();
                 var computer = LhmComputerHost.Get();
+                if (computer is null)
+                {
+                    return new TemperatureSnapshot(null, null, null);
+                }
+
                 double? cpu = null;
                 double? gpu = null;
                 double? rpm = null;

@@ -151,11 +151,20 @@ internal static class Program
         {
         }
 
-        logger.LogInformation("FanControl 退出。");
+        try
+        {
+            // 先关界面（界面线程在 DLL 里跑消息循环）。运行时由上面的 provider 负责释放：
+            // 再手动 DisposeAsync 一次会让 CancellationTokenSource 被二次取消而抛
+            // ObjectDisposedException，那条异常会被 Main 的 catch 当成「启动失败」弹框。
+            UiBridge.Shutdown();
+        }
+        catch (Exception ex)
+        {
+            // 退出路径的异常不该冒充启动失败：界面线程没回收就让它随进程一起走。
+            logger.LogWarning(ex, "关闭界面时出错。");
+        }
 
-        // 先关界面（界面线程在 DLL 里跑消息循环），再拆后台服务。
-        UiBridge.Shutdown();
-        await runtime.DisposeAsync().ConfigureAwait(false);
+        logger.LogInformation("FanControl 退出。");
         return 0;
     }
 

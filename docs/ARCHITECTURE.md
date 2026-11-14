@@ -47,6 +47,7 @@ FanControl.exe (requireAdministrator, 常驻)
 - 界面线程：`UiBridge.EnsureStarted()` 里新建的 STA 线程，跑 DLL 里的消息循环与 D2D 绘制；关窗口后线程退出，下次唤出再建。
 - 采样循环（`PeriodicTimer`）、通信循环、日志 Channel 写线程、命令处理（`Task.Run`）：都在宿主侧。
 - LibreHardwareMonitor 的 `Computer.Update()` 由 `LhmComputerHost.EnsureFresh()` 统一节流（800 ms），温度与转速共享同一份快照，避免一个采样周期打两遍 EC/SMBus。
+- `LhmComputerHost.Configure(...)` 按配置只开用得上的模块（CPU / GPU / 主板·EC），启动与每次 `ApplyConfigAsync` 都会调一次；模块只增不减，重建延迟到下一次 `Get()`，避免在别的线程正遍历硬件时 `Close()`。
 
 ## 资源占用（本机实测）
 
@@ -54,10 +55,15 @@ FanControl.exe (requireAdministrator, 常驻)
 
 | 形态 | 私有内存 | 工作集 | 线程 |
 | --- | --- | --- | --- |
-| 单一进程 `FanControl.exe`（界面打开、实时收数据） | 52–56 MB | 81–82 MB | 42–43 |
+| 单一进程 `FanControl.exe`（界面打开、实时收数据） | 35 MB | 77 MB | 42–43 |
+| 同一进程，关掉界面只剩托盘 | 17–20 MB | 18–20 MB | 41–42 |
 | 拆分版对照：后台 `FanControl.Host.exe` | 42 MB | 85 MB | 26–33 |
 | 拆分版对照：界面 `FanControl.UI.exe` | 26 MB | 43 MB | 24 |
 | 1.3.0 单进程 WPF 版（对照） | 82 MB | — | 24 |
+
+关掉窗口后进程仍驻留托盘，所以退到托盘时会主动收一次：界面的 `WM_DESTROY` 发 `{"cmd":"uiClosed"}`，宿主等 600 ms 再 `SetProcessWorkingSetSize(-1, -1)`（`Ui/MemoryTrim.cs`），实测工作集从 104 MB 掉到 18 MB。
+
+LibreHardwareMonitor 的模块是内存大头：全开（CPU+GPU+主板+控制器）时工作集 119 MB、私有 65 MB；只开 CPU 时 77 / 35 MB。其中 GPU 模块要加载 NVAPI/ADL，约 +37 MB，主板·EC 约 +8 MB，因此现在按配置按需开。
 
 界面渲染目标固定用 `D2D1_RENDER_TARGET_TYPE_SOFTWARE`：同一台机器上硬件 `HwndRenderTarget` 会把私有内存推到 65 MB、线程涨到 45 个（多出来的是显卡驱动线程），而界面只在收到状态帧或鼠标交互时重绘（约 2.5 次/秒），软件光栅的 CPU 代价约 4% 单核。
 

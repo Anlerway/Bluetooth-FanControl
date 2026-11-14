@@ -1,4 +1,6 @@
 using System.IO.Ports;
+using System.Net;
+using System.Net.Http;
 using System.Text.Encodings.Web;
 using System.Text.Json;
 using FanControl.Service.Communication;
@@ -19,6 +21,9 @@ internal sealed class CommandRouter : IAsyncDisposable
 {
     private const int ProtocolVersion = 1;
     private const int PushIntervalMilliseconds = 400;
+    // 值没变的帧没必要重发，但也得留个心跳，免得界面在长时间静止后拿到过期数据
+    private const int HeartbeatMilliseconds = 1000;
+    private const string ReleasesApi = "https://api.github.com/repos/anlerway/Bluetooth-FanControl/releases/latest";
 
     private static readonly JsonSerializerOptions ReplyOptions = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
@@ -27,8 +32,13 @@ internal sealed class CommandRouter : IAsyncDisposable
     private readonly ILogger _logger;
     private readonly CancellationTokenSource _cts = new();
 
+    // 复用同一个 HttpClient：每次 new 会各带一套连接池与定时器，是长期进程的隐形泄漏
+    private static readonly HttpClient Http = CreateHttpClient();
+
     private Task? _pushLoop;
     private volatile bool _autostart;
+    private string? _lastSignature;
+    private long _lastPushTicks;
 
     public CommandRouter(FanControlRuntime runtime, SystemSettings system, ILogger logger)
     {
@@ -40,7 +50,9 @@ internal sealed class CommandRouter : IAsyncDisposable
     public void Start()
     {
         _ = Task.Run(RefreshAutostartAsync);
-        _pushLoop = Task.Run(() => PushLoopAsync(_cts.Token));
+        // 先把 token 取出来再进 lambda：CTS 若在任务被调度前就释放，闭包里取 Token 会抛
+        var token = _cts.Token;
+        _pushLoop = Task.Run(() => PushLoopAsync(token));
     }
 
     /// <summary>界面刚打开时先给一帧完整快照。</summary>
@@ -65,8 +77,25 @@ internal sealed class CommandRouter : IAsyncDisposable
                 continue;
             }
 
-            Send(StateJson.BuildState(_runtime, _autostart, _system.Current));
+            var json = StateJson.BuildState(_runtime, _autostart, _system.Current);
+            var signature = Signature(json);
+            var now = Environment.TickCount64;
+            if (signature == _lastSignature && now - _lastPushTicks < HeartbeatMilliseconds)
+            {
+                continue;
+            }
+
+            _lastSignature = signature;
+            _lastPushTicks = now;
+            Send(json);
         }
+    }
+
+    /// <summary>去掉每次都变的 timestamp，其余字段一致就算同一帧。</summary>
+    private static string Signature(string json)
+    {
+        var index = json.LastIndexOf(",\"timestamp\":", StringComparison.Ordinal);
+        return index > 0 ? json[..index] : json;
     }
 
     public async Task HandleAsync(string json)
@@ -144,6 +173,20 @@ internal sealed class CommandRouter : IAsyncDisposable
 
                 case "setSystem":
                     await HandleSetSystemAsync(root).ConfigureAwait(false);
+                    break;
+
+                case "checkUpdate":
+                    // 网络请求不能占住界面线程的回调（回调本身已经在线程池上，这里再放走一层）
+                    _ = CheckUpdateAsync();
+                    break;
+
+                case "uiClosed":
+                    // 界面窗口关了，进程还要住托盘：等界面线程把 D2D 资源放完再还工作集
+                    _ = Task.Run(async () =>
+                    {
+                        await Task.Delay(600).ConfigureAwait(false);
+                        MemoryTrim.Run();
+                    });
                     break;
 
                 default:
@@ -275,6 +318,48 @@ internal sealed class CommandRouter : IAsyncDisposable
 
         Send(StateJson.BuildState(_runtime, _autostart, _system.Current));
         Send(Reply(new { @event = "ok", cmd = "setSystem" }));
+    }
+
+    private static HttpClient CreateHttpClient()
+    {
+        var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+        client.DefaultRequestHeaders.UserAgent.ParseAdd("FanControl");
+        client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
+        return client;
+    }
+
+    /// <summary>查 GitHub 最新 release：结果以 update 事件回给关于页。</summary>
+    private async Task CheckUpdateAsync()
+    {
+        Send(Reply(new { @event = "update", state = "checking" }));
+        try
+        {
+            using var response = await Http.GetAsync(ReleasesApi).ConfigureAwait(false);
+            if (response.StatusCode == HttpStatusCode.NotFound)
+            {
+                Send(Reply(new { @event = "update", state = "none" }));
+                return;
+            }
+
+            response.EnsureSuccessStatusCode();
+            var body = await response.Content.ReadAsStringAsync().ConfigureAwait(false);
+            using var document = JsonDocument.Parse(body);
+            var root = document.RootElement;
+            var tag = root.TryGetProperty("tag_name", out var tagElement) ? tagElement.GetString() ?? string.Empty : string.Empty;
+            var url = root.TryGetProperty("html_url", out var urlElement) ? urlElement.GetString() ?? string.Empty : string.Empty;
+
+            // 程序集版本是 1.4.0.0、tag 是 1.4.0：直接比 Version 会把同一个版本判成更新
+            var assembly = typeof(CommandRouter).Assembly.GetName().Version ?? new Version(1, 4, 0);
+            var current = new Version(assembly.Major, assembly.Minor, Math.Max(0, assembly.Build));
+            var latest = Version.TryParse(tag.TrimStart('v', 'V'), out var parsed) ? parsed : null;
+            var newer = latest is not null && latest > current;
+            Send(Reply(new { @event = "update", state = newer ? "newer" : "current", tag, url }));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogDebug(ex, "检查更新失败。");
+            Send(Reply(new { @event = "update", state = "failed", detail = ex.Message }));
+        }
     }
 
     private async Task RefreshAutostartAsync()

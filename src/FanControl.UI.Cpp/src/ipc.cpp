@@ -376,6 +376,12 @@ bool ParseMessage(const std::string& text, Message& message) {
         message.autostart = Bool(autostart);
         message.hasAutostart = true;
     }
+    if (message.event == L"update") {
+        if (const JValue* state = root.Get("state")) message.updateState = Str(state);
+        if (const JValue* tag = root.Get("tag")) message.updateTag = Str(tag);
+        if (const JValue* url = root.Get("url")) message.updateUrl = Str(url);
+        if (const JValue* detail = root.Get("detail")) message.updateDetail = Str(detail);
+    }
 
     // 设备/端口/GPU 候选列表：三种事件形状不同，这里统一折成 label/value
     if (message.event == L"bleDevices") {
@@ -439,6 +445,8 @@ bool SetSystem(const std::string& key, const std::string& valueJson) {
     std::string json = "{\"cmd\":\"setSystem\",\"key\":\"" + key + "\",\"value\":" + valueJson + "}";
     return Send(json);
 }
+
+bool CheckUpdate() { return Send("{\"cmd\":\"checkUpdate\"}"); }
 
 bool SetAutostart(bool enabled) {
     return Send(std::string("{\"cmd\":\"setAutostart\",\"value\":") + (enabled ? "true" : "false") + "}");

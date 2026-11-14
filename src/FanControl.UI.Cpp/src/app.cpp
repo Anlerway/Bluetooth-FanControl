@@ -160,11 +160,17 @@ bool App::CreateTarget() {
 }
 
 void App::DropTarget() {
+    // 颜色刷挂在 render target 上，target 没了它们也必须先放掉
+    for (auto& entry : brushes_) entry.second->Release();
+    brushes_.clear();
     if (rt_) { rt_->Release(); rt_ = nullptr; }
 }
 
 void App::Release() {
     DropTarget();
+    for (auto& entry : glyphFormats_) entry.second->Release();
+    glyphFormats_.clear();
+    measureCache_.clear();
     for (IDWriteTextFormat** f : { &fTitle_, &fH2_, &fBody_, &fBodyStrong_, &fSmall_, &fBig_, &fGlyph_ }) {
         if (*f) { (*f)->Release(); *f = nullptr; }
     }
@@ -182,82 +188,79 @@ void App::Resize(UINT pxWidth, UINT pxHeight) {
 
 // ---------------- drawing helpers ----------------
 
-void App::FillRect(D2D1_RECT_F r, D2D1_COLOR_F c) {
+ID2D1SolidColorBrush* App::Brush(const D2D1_COLOR_F& c) {
+    if (!rt_) return nullptr;
+    const uint32_t key = (static_cast<uint32_t>(c.r * 255.0f + 0.5f) << 24) |
+                         (static_cast<uint32_t>(c.g * 255.0f + 0.5f) << 16) |
+                         (static_cast<uint32_t>(c.b * 255.0f + 0.5f) << 8) |
+                         static_cast<uint32_t>(c.a * 255.0f + 0.5f);
+    auto it = brushes_.find(key);
+    if (it != brushes_.end()) return it->second;
     ID2D1SolidColorBrush* b = nullptr;
-    if (SUCCEEDED(rt_->CreateSolidColorBrush(c, &b))) {
-        rt_->FillRectangle(r, b);
-        b->Release();
-    }
+    if (FAILED(rt_->CreateSolidColorBrush(c, &b)) || !b) return nullptr;
+    brushes_.emplace(key, b);
+    return b;
+}
+
+void App::FillRect(D2D1_RECT_F r, D2D1_COLOR_F c) {
+    if (ID2D1SolidColorBrush* b = Brush(c)) rt_->FillRectangle(r, b);
 }
 
 void App::FillRound(D2D1_RECT_F r, float radius, D2D1_COLOR_F c) {
-    ID2D1SolidColorBrush* b = nullptr;
-    if (SUCCEEDED(rt_->CreateSolidColorBrush(c, &b))) {
-        rt_->FillRoundedRectangle(D2D1::RoundedRect(r, radius, radius), b);
-        b->Release();
-    }
+    if (ID2D1SolidColorBrush* b = Brush(c)) rt_->FillRoundedRectangle(D2D1::RoundedRect(r, radius, radius), b);
 }
 
 void App::StrokeRound(D2D1_RECT_F r, float radius, D2D1_COLOR_F c, float width) {
-    ID2D1SolidColorBrush* b = nullptr;
-    if (SUCCEEDED(rt_->CreateSolidColorBrush(c, &b))) {
-        rt_->DrawRoundedRectangle(D2D1::RoundedRect(r, radius, radius), b, width);
-        b->Release();
-    }
+    if (ID2D1SolidColorBrush* b = Brush(c)) rt_->DrawRoundedRectangle(D2D1::RoundedRect(r, radius, radius), b, width);
 }
 
 void App::Line(float x1, float y1, float x2, float y2, D2D1_COLOR_F c, float width) {
-    ID2D1SolidColorBrush* b = nullptr;
-    if (SUCCEEDED(rt_->CreateSolidColorBrush(c, &b))) {
-        rt_->DrawLine(D2D1::Point2F(x1, y1), D2D1::Point2F(x2, y2), b, width);
-        b->Release();
-    }
+    if (ID2D1SolidColorBrush* b = Brush(c)) rt_->DrawLine(D2D1::Point2F(x1, y1), D2D1::Point2F(x2, y2), b, width);
 }
 
 void App::Text(const std::wstring& s, D2D1_RECT_F r, IDWriteTextFormat* fmt, D2D1_COLOR_F c) {
-    ID2D1SolidColorBrush* b = nullptr;
-    if (SUCCEEDED(rt_->CreateSolidColorBrush(c, &b))) {
-        fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
-        fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
-        rt_->DrawTextW(s.c_str(), static_cast<UINT32>(s.size()), fmt, r, b, D2D1_DRAW_TEXT_OPTIONS_CLIP);
-        b->Release();
-    }
+    ID2D1SolidColorBrush* b = Brush(c);
+    if (!b) return;
+    fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_LEADING);
+    fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_NEAR);
+    rt_->DrawTextW(s.c_str(), static_cast<UINT32>(s.size()), fmt, r, b, D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
 
 void App::TextCentered(const std::wstring& s, D2D1_RECT_F r, IDWriteTextFormat* fmt, D2D1_COLOR_F c) {
-    ID2D1SolidColorBrush* b = nullptr;
-    if (SUCCEEDED(rt_->CreateSolidColorBrush(c, &b))) {
-        fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-        fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        rt_->DrawTextW(s.c_str(), static_cast<UINT32>(s.size()), fmt, r, b, D2D1_DRAW_TEXT_OPTIONS_CLIP);
-        b->Release();
-    }
+    ID2D1SolidColorBrush* b = Brush(c);
+    if (!b) return;
+    fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+    fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    rt_->DrawTextW(s.c_str(), static_cast<UINT32>(s.size()), fmt, r, b, D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
 
 void App::TextRight(const std::wstring& s, D2D1_RECT_F r, IDWriteTextFormat* fmt, D2D1_COLOR_F c) {
-    ID2D1SolidColorBrush* b = nullptr;
-    if (SUCCEEDED(rt_->CreateSolidColorBrush(c, &b))) {
-        fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
-        fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-        rt_->DrawTextW(s.c_str(), static_cast<UINT32>(s.size()), fmt, r, b, D2D1_DRAW_TEXT_OPTIONS_CLIP);
-        b->Release();
-    }
+    ID2D1SolidColorBrush* b = Brush(c);
+    if (!b) return;
+    fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_TRAILING);
+    fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+    rt_->DrawTextW(s.c_str(), static_cast<UINT32>(s.size()), fmt, r, b, D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
 
 void App::Glyph(const std::wstring& s, D2D1_RECT_F r, float size, D2D1_COLOR_F c) {
+    // 字号只有 10/12/14/16 这几档，按桶缓存 TextFormat；以前每次画图标都新建一个
+    const int key = static_cast<int>(size * 4.0f);
     IDWriteTextFormat* fmt = nullptr;
-    if (FAILED(dw_->CreateTextFormat(L"Segoe Fluent Icons", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
-                                     DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size, L"en-US", &fmt))) {
-        return;
+    auto it = glyphFormats_.find(key);
+    if (it != glyphFormats_.end()) {
+        fmt = it->second;
+    } else {
+        if (FAILED(dw_->CreateTextFormat(L"Segoe Fluent Icons", nullptr, DWRITE_FONT_WEIGHT_NORMAL,
+                                         DWRITE_FONT_STYLE_NORMAL, DWRITE_FONT_STRETCH_NORMAL, size, L"en-US", &fmt))) {
+            return;
+        }
+        fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
+        fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        glyphFormats_.emplace(key, fmt);
     }
-    fmt->SetTextAlignment(DWRITE_TEXT_ALIGNMENT_CENTER);
-    fmt->SetParagraphAlignment(DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
-    ID2D1SolidColorBrush* b = nullptr;
-    if (SUCCEEDED(rt_->CreateSolidColorBrush(c, &b))) {
-        rt_->DrawTextW(s.c_str(), static_cast<UINT32>(s.size()), fmt, r, b, D2D1_DRAW_TEXT_OPTIONS_CLIP);
-        b->Release();
-    }
-    fmt->Release();
+    ID2D1SolidColorBrush* b = Brush(c);
+    if (!b) return;
+    rt_->DrawTextW(s.c_str(), static_cast<UINT32>(s.size()), fmt, r, b, D2D1_DRAW_TEXT_OPTIONS_CLIP);
 }
 
 void App::AddHit(D2D1_RECT_F r, const std::wstring& id) { hits_.push_back({ r, id }); }
@@ -275,6 +278,12 @@ void App::Switch(float x, float y, bool on) {
 
 float App::MeasureText(const std::wstring& text, IDWriteTextFormat* format) const {
     if (!dw_ || !format || text.empty()) return 0.0f;
+    // 每个按钮每帧都量一次会把 TextLayout 造得很凶：按 (格式, 文本) 缓存，宽度不随主题变
+    std::wstring key = std::to_wstring(reinterpret_cast<uintptr_t>(format));
+    key.push_back(L'|');
+    key += text;
+    auto cached = measureCache_.find(key);
+    if (cached != measureCache_.end()) return cached->second;
     IDWriteTextLayout* layout = nullptr;
     if (FAILED(dw_->CreateTextLayout(text.c_str(), static_cast<UINT32>(text.size()), format,
                                      2048.0f, 100.0f, &layout)) || !layout)
@@ -282,6 +291,8 @@ float App::MeasureText(const std::wstring& text, IDWriteTextFormat* format) cons
     DWRITE_TEXT_METRICS m{};
     const float width = SUCCEEDED(layout->GetMetrics(&m)) ? m.widthIncludingTrailingWhitespace : 0.0f;
     layout->Release();
+    if (measureCache_.size() > 512) measureCache_.clear();  // 设备名之类会变的文本不做无限缓存
+    measureCache_.emplace(std::move(key), width);
     return width;
 }
 
@@ -317,7 +328,8 @@ void App::RowToggle(float x, float y, float w, float h, const std::wstring& id, 
     if (!subtitle.empty())
         Text(subtitle, D2D1::RectF(x + 16, y + h / 2 + 1, x + w - 80, y + h / 2 + 18), fSmall_, theme_.textSecondary);
     Switch(x + w - 56, y + h / 2 - 10, on);
-    AddHit(r, id);
+    // 开关只认开关本体（右边 96 DIP 宽、整行高）：以前整行都能点，点到标题就把设置翻了
+    AddHit(D2D1::RectF(x + w - 96.0f, y, x + w - 4.0f, y + h), id);
 }
 
 void App::RowSlider(float x, float y, float w, float h, const std::wstring& id, const std::wstring& title,
@@ -339,7 +351,8 @@ void App::RowSlider(float x, float y, float w, float h, const std::wstring& id, 
     StrokeRound(D2D1::RectF(kx - 10, cy - 10, kx + 10, cy + 10), 10.0f, theme_.controlBorder);
     TextRight(valueText, D2D1::RectF(x + w - 128, y, x + w - 16, y + h), fBody_, theme_.textSecondary);
     sliders_[id] = SliderGeom{ trackL, trackR, lo, hi };
-    AddHit(r, id);
+    // 只有轨道（两侧各留 12 DIP 手指余量）算命中：以前整行都算，点标题也会把值跳到底
+    AddHit(D2D1::RectF(trackL - 12.0f, cy - 20.0f, trackR + 12.0f, cy + 20.0f), id);
 }
 
 double App::SliderValueAt(const std::wstring& id, int clickX, double fallback) const {
@@ -347,6 +360,69 @@ double App::SliderValueAt(const std::wstring& id, int clickX, double fallback) c
     if (it == sliders_.end() || it->second.trackR <= it->second.trackL) return fallback;
     const double t = std::clamp((clickX - it->second.trackL) / (it->second.trackR - it->second.trackL), 0.0f, 1.0f);
     return it->second.lo + t * (it->second.hi - it->second.lo);
+}
+
+bool App::IsSliderRow(const std::wstring& id) const {
+    return id == L"set:manualpwm" || id == L"set:smooth" || id == L"set:poll" || id == L"set:blepoll" ||
+           id == L"set:reconnect";
+}
+
+double App::SliderRowValue(const std::wstring& id) const {
+    if (id == L"set:manualpwm") return config_.manualPwmPercent;
+    if (id == L"set:smooth") return config_.pwmSmoothingWindowSeconds;
+    if (id == L"set:poll") return config_.pollIntervalMilliseconds / 1000.0;
+    if (id == L"set:blepoll") return config_.blePollIntervalSeconds;
+    if (id == L"set:reconnect") return config_.bleReconnectIntervalSeconds;
+    return 0.0;
+}
+
+// 滑块取值的量化规则集中在这里：拖动（send=false）与松手（send=true）走同一条路径，
+// 否则会出现「拖的时候显示 4.37、松手变成 4.4」的跳动。
+void App::ApplySliderValue(const std::wstring& id, double value, bool send) {
+    char buffer[32];
+    if (id == L"set:manualpwm") {
+        const int next = static_cast<int>(std::lround(value));
+        config_.manualPwmPercent = next;
+        if (send) {
+            std::snprintf(buffer, sizeof(buffer), "%d", next);
+            SendValue("manualPwmPercent", buffer);
+        }
+    } else if (id == L"set:smooth") {
+        const double seconds = std::round(value * 10.0) / 10.0;
+        config_.pwmSmoothingWindowSeconds = seconds;
+        smoothMs_ = std::clamp(static_cast<int>(seconds * 1000.0), 100, 3000);
+        if (send) {
+            std::snprintf(buffer, sizeof(buffer), "%.1f", seconds);
+            SendValue("pwmSmoothingWindowSeconds", buffer);
+        }
+    } else if (id == L"set:poll") {
+        const double seconds = std::round(value * 10.0) / 10.0;
+        config_.pollIntervalMilliseconds = static_cast<int>(std::lround(seconds * 1000.0));
+        if (send) {
+            std::snprintf(buffer, sizeof(buffer), "%d", config_.pollIntervalMilliseconds);
+            SendValue("pollIntervalMilliseconds", buffer);
+        }
+    } else if (id == L"set:blepoll") {
+        const int next = static_cast<int>(std::lround(value));
+        config_.blePollIntervalSeconds = next;
+        if (send) {
+            std::snprintf(buffer, sizeof(buffer), "%d", next);
+            SendValue("blePollIntervalSeconds", buffer);
+        }
+    } else if (id == L"set:reconnect") {
+        const int next = static_cast<int>(std::lround(value));
+        config_.bleReconnectIntervalSeconds = next;
+        if (send) {
+            std::snprintf(buffer, sizeof(buffer), "%d", next);
+            SendValue("bleReconnectIntervalSeconds", buffer);
+        }
+    }
+}
+
+// 宿主每 400 ms 会推一份完整配置；拖拽期间不能让旧快照把滑块拉回去
+void App::RestoreSliderValue() {
+    if (sliderDrag_.empty()) return;
+    ApplySliderValue(sliderDrag_, sliderValue_, false);
 }
 
 void App::RowCombo(float x, float y, float w, float h, const std::wstring& id, const std::wstring& title,
@@ -362,7 +438,8 @@ void App::RowCombo(float x, float y, float w, float h, const std::wstring& id, c
     StrokeRound(box, 4.0f, Hovered(id) ? theme_.accent : theme_.controlBorder);
     Text(value, D2D1::RectF(box.left + 10, box.top, box.right - 26, box.bottom), fBody_, theme_.textPrimary);
     Glyph(L"\xE70D", D2D1::RectF(box.right - 24, box.top, box.right - 6, box.bottom), 10.0f, theme_.textSecondary);
-    AddHit(r, id);
+    // 下拉只认值框（左右各留 8 DIP 余量、整行高）
+    AddHit(D2D1::RectF(box.left - 8.0f, y, box.right + 8.0f, y + h), id);
 }
 
 void App::RowStatus(float x, float y, float w, float h, const std::wstring& id, const std::wstring& title,
@@ -378,6 +455,18 @@ void App::RowStatus(float x, float y, float w, float h, const std::wstring& id, 
     StrokeRound(button, 4.0f, theme_.controlBorder);
     TextCentered(fc::T(L"重新连接"), button, fSmall_, theme_.textPrimary);
     AddHit(button, L"act:reconnect");
+}
+
+void App::RowLink(float x, float y, float w, float h, const std::wstring& title, const std::wstring& subtitle,
+                 const std::wstring& url) {
+    D2D1_RECT_F r = D2D1::RectF(x, y, x + w, y + h);
+    const std::wstring id = L"url:" + url;
+    if (Hovered(id)) FillRound(r, 4.0f, theme_.controlHover);
+    Text(title, D2D1::RectF(x + 16, y + 8, x + w - 16, y + 28), fBody_, theme_.accent);
+    if (!subtitle.empty() && subtitle != title)
+        Text(subtitle, D2D1::RectF(x + 16, y + 30, x + w - 16, y + 48), fSmall_, theme_.textSecondary);
+    if (Hovered(id)) Line(x + 16, y + 29, x + 16 + MeasureText(title, fBody_), y + 29, theme_.accent, 1.0f);
+    AddHit(r, id);
 }
 
 float App::Card(float x, float y, float w, const std::wstring& title, float height) {
@@ -714,29 +803,76 @@ void App::DrawCurve(float x, float y, float w) {
     contentHeight_ = by + 32 + 24 - y;
 }
 
+// 关于页按 1.3.0 的四块内容排：引用库 / 参考项目 / 开源地址 / 检查更新
 void App::DrawAbout(float x, float y, float w) {
     const float top = y;
-    float rowH = 56.0f;
-    Card(x, y, w, L"", 4 * rowH + 8);
-    struct Row { const wchar_t* k; std::wstring v; };
-    Row rows[4] = {
-        { fc::T(L"版本"), fc::T(L"1.4.0（C++ UI）") },
-        { fc::T(L"界面"), L"Win32 + Direct2D / DirectWrite" },
-        { fc::T(L"运行方式"), snap_.backendConnected ? fc::T(L"界面与采样在同一进程") : fc::T(L"未连接（演示数据）") },
-        { fc::T(L"配置文件"), L"%APPDATA%\\FanControl\\Config\\appconfig.json" },
+    Text(L"FanControl v1.4.0", D2D1::RectF(x, y, x + w, y + 34), fH2_, theme_.textPrimary);
+    y += 42;
+
+    struct LibRow { const wchar_t* name; const wchar_t* version; };
+    const LibRow libs[] = {
+        { L"LibreHardwareMonitorLib", L"0.9.6" },
+        { L"CommunityToolkit.Mvvm", L"8.4.2" },
+        { L"Microsoft.Extensions.Hosting", L"8.0.1" },
+        { L"System.IO.Ports", L"10.0.3" },
+        { L"System.Management", L"10.0.2" },
+        { L"Windows App SDK", fc::T(L"Windows 通知") },
+        { L".NET", L"8" },
     };
-    float ry = y + 4;
-    for (auto& r : rows) {
-        Text(r.k, D2D1::RectF(x + 16, ry + 16, x + 180, ry + 40), fSmall_, theme_.textSecondary);
-        Text(r.v, D2D1::RectF(x + 180, ry + 16, x + w - 16, ry + 40), fBody_, theme_.textPrimary);
-        ry += rowH;
+    // 卡片标题占掉顶部 44 DIP：以前从 y+4 开始排行，标题和第一行叠在一起
+    const float headerH = 44.0f;
+    const float libRowH = 30.0f;
+    const int libCount = 7;
+    float cardH = headerH + static_cast<float>(libCount) * libRowH + 8;
+    Card(x, y, w, fc::T(L"引用库"), cardH);
+    float ry = y + headerH;
+    for (const auto& lib : libs) {
+        Text(lib.name, D2D1::RectF(x + 16, ry + 7, x + w - 220, ry + 27), fBody_, theme_.textPrimary);
+        TextRight(lib.version, D2D1::RectF(x + w - 210, ry, x + w - 16, ry + libRowH), fSmall_, theme_.textSecondary);
+        ry += libRowH;
     }
-    y += 4 * rowH + 8 + 20;
-    const float logsW = std::max(110.0f, MeasureText(fc::T(L"打开日志目录"), fBody_) + 32.0f);
-    const float releaseW = std::max(118.0f, MeasureText(fc::T(L"打开发布页"), fBody_) + 32.0f);
-    Chip(x, y, logsW, 32, fc::T(L"打开日志目录"), false, L"logs");
-    Chip(x + logsW + 8, y, releaseW, 32, fc::T(L"打开发布页"), false, L"release");
-    contentHeight_ = y + 32 + 24 - top;
+    y += cardH + 16;
+
+    const float linkH = 54.0f;
+    cardH = headerH + 3 * linkH + 8;
+    Card(x, y, w, fc::T(L"参考项目"), cardH);
+    RowLink(x, y + headerH, w, linkH, L"G-Helper", fc::T(L"华硕设备控制参考"), L"https://github.com/seerge/g-helper");
+    RowLink(x, y + headerH + linkH, w, linkH, fc::T(L"适用的开源硬件及参考"), fc::T(L"B 站视频"),
+            L"https://www.bilibili.com/video/BV1Lr421M7u2/");
+    RowLink(x, y + headerH + 2 * linkH, w, linkH, L"LibreHardwareMonitor", fc::T(L"硬件监控库"),
+            L"https://github.com/LibreHardwareMonitor/LibreHardwareMonitor");
+    y += cardH + 16;
+
+    cardH = headerH + 2 * linkH + 8;
+    Card(x, y, w, fc::T(L"开源地址"), cardH);
+    RowLink(x, y + headerH, w, linkH, L"anlerway/Bluetooth-FanControl", fc::T(L"本仓库"),
+            L"https://github.com/anlerway/Bluetooth-FanControl");
+    RowLink(x, y + headerH + linkH, w, linkH, L"anlerway/ESP32-LaptopFan", fc::T(L"固件"),
+            L"https://github.com/anlerway/ESP32-LaptopFan");
+    y += cardH + 16;
+
+    const bool newer = updateState_ == UpdateState::Newer && !updateUrl_.empty();
+    cardH = newer ? 168.0f : 104.0f;
+    Card(x, y, w, fc::T(L"检查更新"), cardH);
+    const float bw = std::max(110.0f, MeasureText(fc::T(L"检查更新"), fBody_) + 32.0f);
+    Chip(x + 16, y + headerH + 6, bw, 32, fc::T(L"检查更新"), false, L"act:checkupdate");
+    std::wstring status;
+    switch (updateState_) {
+        case UpdateState::Checking: status = fc::T(L"正在检查更新…"); break;
+        case UpdateState::Current: status = fc::T(L"已是最新版本"); break;
+        case UpdateState::Newer: status = std::wstring(fc::T(L"发现新版本")) + L" " + updateTag_; break;
+        case UpdateState::None: status = fc::T(L"仓库暂无发布版本"); break;
+        case UpdateState::Failed:
+            status = std::wstring(fc::T(L"检查更新失败：")) + updateDetail_;
+            break;
+        case UpdateState::Idle:
+        default: status = fc::T(L"点击检查更新"); break;
+    }
+    Text(status, D2D1::RectF(x + 16 + bw + 12, y + headerH + 6, x + w - 16, y + headerH + 38), fSmall_,
+         theme_.textSecondary);
+    if (newer) RowLink(x, y + headerH + 48, w, 50, fc::T(L"打开下载页"), updateUrl_, updateUrl_);
+    y += cardH;
+    contentHeight_ = y + 24 - top;
 }
 
 // ---------------- 行内下拉（ComboBox） ----------------
@@ -998,6 +1134,15 @@ void App::OnMouseMove(int x, int y) {
     mouseX_ = x;
     mouseY_ = y;
     float sx = x / scale_, sy = y / scale_;
+    if (!sliderDrag_.empty()) {
+        // 拖动只改本地值并重绘，命令在松手时发一次，避免每个像素都写盘
+        sliderValue_ = SliderValueAt(sliderDrag_, static_cast<int>(std::lround(sx)), SliderRowValue(sliderDrag_));
+        ApplySliderValue(sliderDrag_, sliderValue_, false);
+        hover_ = sliderDrag_;
+        SetCursor(LoadCursorW(nullptr, IDC_HAND));
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
     std::wstring previous = hover_;
     hover_.clear();
     for (auto& h : hits_) {
@@ -1034,6 +1179,7 @@ void App::OnLButtonDown(int x, int y) {
     // 下拉打开时：点条目就选中，点别处就收起（和系统 ComboBox 一样）
     if (!comboOpen_.empty()) {
         // 浮层画在最上层，命中也要从后往前：底下的行先入表，否则点到浮层会先命中被遮住的行。
+        const std::wstring openId = comboOpen_;
         for (auto it = hits_.rbegin(); it != hits_.rend(); ++it) {
             const D2D1_RECT_F& r = it->rect;
             if (sx < r.left || sx > r.right || sy < r.top || sy > r.bottom) continue;
@@ -1041,10 +1187,15 @@ void App::OnLButtonDown(int x, int y) {
                 ChooseComboItem(_wtoi(it->id.c_str() + 6));
                 return;
             }
+            // 再点一次同一个值框就是收起，别刚收起又立刻弹开
+            if (it->id == openId) {
+                CloseCombo();
+                return;
+            }
             break;
         }
+        // 点到别处：先收起浮层，但这一下仍然按命中的控件处理（点另一个下拉就直接换成它）
         CloseCombo();
-        return;
     }
 
     if (page_ == Page::Curve) {
@@ -1074,7 +1225,25 @@ void App::OnLButtonDown(int x, int y) {
             scroll_ = 0.0f;
             InvalidateRect(hwnd_, nullptr, FALSE);
         } else if (id.rfind(L"set:", 0) == 0) {
-            HandleSettingClick(id, h.rect, static_cast<int>(std::lround(sx)));
+            if (IsSliderRow(id)) {
+                // 滑块：按下即定位并进入拖拽状态，松手才落盘
+                sliderDrag_ = id;
+                sliderValue_ = SliderValueAt(id, static_cast<int>(std::lround(sx)), SliderRowValue(id));
+                ApplySliderValue(id, sliderValue_, false);
+                SetCapture(hwnd_);
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            } else {
+                HandleSettingClick(id, h.rect, static_cast<int>(std::lround(sx)));
+            }
+        } else if (id.rfind(L"url:", 0) == 0) {
+            ShellExecuteW(nullptr, L"open", id.c_str() + 4, nullptr, nullptr, SW_SHOWNORMAL);
+        } else if (id == L"chip:act:checkupdate") {
+            updateState_ = UpdateState::Checking;
+            updateTag_.clear();
+            updateUrl_.clear();
+            updateDetail_.clear();
+            fc::CheckUpdate();
+            InvalidateRect(hwnd_, nullptr, FALSE);
         } else if (id == L"chip:curve:temp" || id == L"chip:curve:rpm") {
             curveTab_ = (id == L"chip:curve:rpm") ? 1 : 0;
             dragIndex_ = -1;
@@ -1119,6 +1288,13 @@ void App::OnLButtonDown(int x, int y) {
 }
 
 void App::OnLButtonUp(int, int) {
+    if (!sliderDrag_.empty()) {
+        ApplySliderValue(sliderDrag_, sliderValue_, true);
+        sliderDrag_.clear();
+        ReleaseCapture();
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return;
+    }
     if (dragIndex_ >= 0 && page_ == Page::Curve) PushCurveToBackend();
     dragIndex_ = -1;
 }
@@ -1179,6 +1355,16 @@ void App::OnIpcMessage(void* payload) {
         comboBusy_ = false;
     }
     if (message->hasAutostart) autostart_ = message->autostart;
+    if (message->event == L"update") {
+        if (message->updateState == L"checking") updateState_ = UpdateState::Checking;
+        else if (message->updateState == L"current") updateState_ = UpdateState::Current;
+        else if (message->updateState == L"newer") updateState_ = UpdateState::Newer;
+        else if (message->updateState == L"none") updateState_ = UpdateState::None;
+        else updateState_ = UpdateState::Failed;
+        updateTag_ = message->updateTag;
+        updateUrl_ = message->updateUrl;
+        updateDetail_ = message->updateDetail;
+    }
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
@@ -1193,6 +1379,7 @@ void App::ApplyConfig(const fc::Config& config) {
         InvalidateRect(hwnd_, nullptr, FALSE);
     }
     smoothMs_ = std::clamp(static_cast<int>(config.pwmSmoothingWindowSeconds * 1000.0), 100, 3000);
+    RestoreSliderValue();
     if (dragIndex_ < 0) {
         // 拖拽期间不覆盖用户正在编辑的曲线
         if (first || curve_.size() != config.curve.size()) {
@@ -1370,38 +1557,9 @@ void App::HandleSettingClick(const std::wstring& id, D2D1_RECT_F rect, int click
         }
     }
 
-    if (id == L"set:manualpwm") {
-        const int next = static_cast<int>(std::lround(SliderValueAt(id, clickX, config_.manualPwmPercent)));
-        config_.manualPwmPercent = next;
-        char buffer[16];
-        std::snprintf(buffer, sizeof(buffer), "%d", next);
-        SendValue("manualPwmPercent", buffer);
-    } else if (id == L"set:smooth") {
-        const double seconds = std::round(SliderValueAt(id, clickX, config_.pwmSmoothingWindowSeconds) * 10.0) / 10.0;
-        config_.pwmSmoothingWindowSeconds = seconds;
-        smoothMs_ = std::clamp(static_cast<int>(seconds * 1000.0), 100, 3000);
-        char buffer[32];
-        std::snprintf(buffer, sizeof(buffer), "%.1f", seconds);
-        SendValue("pwmSmoothingWindowSeconds", buffer);
-    } else if (id == L"set:poll") {
-        const double seconds =
-            std::round(SliderValueAt(id, clickX, config_.pollIntervalMilliseconds / 1000.0) * 10.0) / 10.0;
-        config_.pollIntervalMilliseconds = static_cast<int>(std::lround(seconds * 1000.0));
-        char buffer[16];
-        std::snprintf(buffer, sizeof(buffer), "%d", config_.pollIntervalMilliseconds);
-        SendValue("pollIntervalMilliseconds", buffer);
-    } else if (id == L"set:blepoll") {
-        const int next = static_cast<int>(std::lround(SliderValueAt(id, clickX, config_.blePollIntervalSeconds)));
-        config_.blePollIntervalSeconds = next;
-        char buffer[16];
-        std::snprintf(buffer, sizeof(buffer), "%d", next);
-        SendValue("blePollIntervalSeconds", buffer);
-    } else if (id == L"set:reconnect") {
-        const int next = static_cast<int>(std::lround(SliderValueAt(id, clickX, config_.bleReconnectIntervalSeconds)));
-        config_.bleReconnectIntervalSeconds = next;
-        char buffer[16];
-        std::snprintf(buffer, sizeof(buffer), "%d", next);
-        SendValue("bleReconnectIntervalSeconds", buffer);
+    if (IsSliderRow(id)) {
+        // 键盘/点击兜底路径：按下时没走拖拽分支（例如探针脚本直接点到轨道）也按位置取值
+        ApplySliderValue(id, SliderValueAt(id, clickX, SliderRowValue(id)), true);
     } else if (id == L"set:autostart") {
         autostart_ = !autostart_;
         SendAutostart(autostart_);

@@ -61,6 +61,8 @@ LRESULT CALLBACK WndProc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_DESTROY:
         KillTimer(hwnd, 1);
+        // 窗口销毁后进程还要在托盘里待着：通知宿主把界面占的工作集还给系统
+        fc::Send("{\"cmd\":\"uiClosed\"}");
         g_app.Release();
         PostQuitMessage(0);
         return 0;

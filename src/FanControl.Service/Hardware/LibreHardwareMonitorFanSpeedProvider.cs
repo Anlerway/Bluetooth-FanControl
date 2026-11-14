@@ -19,6 +19,11 @@ public sealed class LibreHardwareMonitorFanSpeedProvider : IFanSpeedProvider
                 // 硬件刷新由 LhmComputerHost 统一节流，与温度 Provider 共享同一次 Update
                 LhmComputerHost.EnsureFresh();
                 var computer = LhmComputerHost.Get();
+                if (computer is null)
+                {
+                    return null;
+                }
+
                 double? rpm = null;
 
                 foreach (var hardware in computer.Hardware)
