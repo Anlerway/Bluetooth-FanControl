@@ -1,0 +1,9 @@
+// 安装包资源：图标 + 版本信息 + 清单
+#include "build\version.h"
+
+#define FC_FILENAME "FanControl-Setup.exe"
+#define FC_DESCRIPTION "FanControl Setup"
+#include "version.inc"
+
+101 ICON "build\app.ico"
+1 24 "app.manifest"

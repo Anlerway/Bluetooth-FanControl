@@ -1,17 +1,17 @@
 ﻿<#
-FanControl 发布打包脚本（单一进程 FanControl.exe + 进程内界面 FanControl.UI.dll）
+FanControl release packaging (single-process FanControl.exe + in-process FanControl.UI.dll)
 -------------------------------------------------------------------------------
-产物（文件名来自 package-names.txt，UTF-8 保存，{0} 为版本号）：
-  zip   自带运行时 : <ReleaseRoot>\FanControl-v1.4.0-<label>.zip
-  zip   需 .NET 8  : <ReleaseRoot>\FanControl-v1.4.0-<label>.zip
-  安装包 自带运行时 : <InstallerRoot>\FanControl-v1.4.0-<label>.exe
-  安装包 需 .NET 8 : <InstallerRoot>\FanControl-v1.4.0-<label>.exe
+Artifacts (names from package-names.txt, UTF-8, {0} = version):
+  zip   self-contained : <ReleaseRoot>\FanControl-<version>-selfcontained-win-x64.zip
+  zip   needs .NET 8   : <ReleaseRoot>\FanControl-<version>-framework-win-x64.zip
+  installer (one package, two payloads) : <InstallerRoot>\FanControl-Setup-<version>.exe
 
-用法：
+Usage:
   powershell -NoProfile -ExecutionPolicy Bypass -File installer\_build-release.ps1
 
-流程：本地构建 C++ 界面 DLL → dotnet publish 宿主（两种 flavor，产物是 FanControl.exe）
-→ 把界面 DLL 拷进发布目录 → 打包 zip 与 Inno Setup 安装包。安装包不检测 .NET 运行环境（见 installer.iss）。
+Flow: build the C++ UI DLL -> dotnet publish the host (two flavors, output is FanControl.exe)
+-> copy the UI DLL into each publish folder -> zip both -> compile ONE Inno Setup package that
+carries both payloads; the .NET 8 desktop runtime check picks the default at install time.
 #>
 
 param(
@@ -20,7 +20,7 @@ param(
     [string]$RuntimeIdentifier = 'win-x64',
     [string]$HostProject = "$PSScriptRoot\..\src\FanControl.Host\FanControl.Host.csproj",
     [string]$UiProjectDir = "$PSScriptRoot\..\src\FanControl.UI.Cpp",
-    # 产物放在仓库外：仓库只保留源码、构建脚本、文档与测试。
+    # Release artifacts stay outside the repo: the repo holds sources, build scripts, docs, tests only.
     [string]$ReleaseRoot = "$PSScriptRoot\..\..\artifacts\release",
     [string]$InstallerRoot = "$PSScriptRoot\..\..\artifacts\installer",
     [string]$NamesFile = "$PSScriptRoot\package-names.txt",
@@ -33,7 +33,7 @@ $UiProjectDir = (Resolve-Path $UiProjectDir).Path
 $ReleaseRoot = [System.IO.Path]::GetFullPath($ReleaseRoot)
 $InstallerRoot = [System.IO.Path]::GetFullPath($InstallerRoot)
 
-# --- 包名（UTF-8 文件，{0} = 版本号） --------------------------------
+# --- package names (UTF-8 file, {0} = version) ----------------------------------
 function Get-PackageNames {
     param([string]$Path, [string]$Version)
 
@@ -46,7 +46,7 @@ function Get-PackageNames {
         $names[$parts[0].Trim()] = $parts[1].Trim().Replace('{0}', $Version)
     }
 
-    foreach ($required in @('zip-selfcontained', 'zip-framework', 'setup-selfcontained', 'setup-framework')) {
+    foreach ($required in @('zip-selfcontained', 'zip-framework', 'setup')) {
         if (-not $names.ContainsKey($required)) { throw "package-names.txt is missing key: $required" }
     }
 
@@ -59,13 +59,13 @@ Write-Host "== FanControl $Version release packaging ==" -ForegroundColor Cyan
 Write-Host "Host: $HostProject"
 Write-Host "UI  : $UiProjectDir"
 
-# --- 1) 构建 C++ 界面 ------------------------------------------------
+# --- 1) build the C++ UI ---------------------------------------------------------
 function Invoke-UiBuild {
     $bat = Join-Path $script:UiProjectDir 'build.bat'
     if (-not (Test-Path $bat)) { throw "build.bat not found: $bat" }
 
     Write-Host "`n-- build C++ UI -> $script:UiProjectDir\build" -ForegroundColor Yellow
-    # 正在运行的宿主会锁住 DLL，先结束自己拉起的实例
+    # A running host locks the DLL, stop the instances we launched
     Get-Process FanControl -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 
     $cmd = 'cd /d "' + $script:UiProjectDir + '" && build.bat > build.log 2>&1'
@@ -81,7 +81,7 @@ function Invoke-UiBuild {
     return $dll
 }
 
-# --- 2) 发布后台 ------------------------------------------------------
+# --- 2) publish the host ---------------------------------------------------------
 function Invoke-Publish {
     param([string]$Name, [string]$OutDir, [bool]$SelfContained, [string]$UiDll)
 
@@ -107,7 +107,7 @@ function Invoke-Publish {
     $hostExe = Join-Path $OutDir 'FanControl.exe'
     if (-not (Test-Path $hostExe)) { throw "FanControl.exe missing in publish output: $OutDir" }
 
-    # 界面 DLL 由 csproj 的 None/ CopyToPublishDirectory 带出来，这里再兜一次底
+    # The UI DLL is copied by csproj None/CopyToPublishDirectory; copy once more as a safety net
     Copy-Item $UiDll (Join-Path $OutDir 'FanControl.UI.dll') -Force
 
     $files = Get-ChildItem $OutDir -Recurse -File
@@ -129,17 +129,18 @@ function Invoke-Iscc {
     param(
         [string]$Compiler,
         [string]$Script,
-        [string]$SourceDir,
+        [string]$FullSource,
+        [string]$SlimSource,
         [string]$Name,
         [string]$OutDir
     )
 
-    Write-Host "`n-- installer [$Name]" -ForegroundColor Yellow
-    & $Compiler $Script "/DAppVersion=$script:Version" "/DAppSource=$SourceDir" "/DOutputName=$Name" "/DOutputDir=$OutDir" | Out-Null
+    Write-Host "`n-- installer [$Name] (full + slim payload in one package)" -ForegroundColor Yellow
+    & $Compiler $Script "/DAppVersion=$script:Version" "/DFullSource=$FullSource" "/DSlimSource=$SlimSource" "/DOutputName=$Name" "/DOutputDir=$OutDir" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed: $Name (exit $LASTEXITCODE)" }
 }
 
-# --- 主流程 -----------------------------------------------------------
+# --- main -----------------------------------------------------------------------
 $uiDll = Invoke-UiBuild
 
 $selfContainedDir = Join-Path $ReleaseRoot 'selfcontained'
@@ -155,8 +156,7 @@ if (-not (Test-Path $Iscc)) { throw "Inno Setup compiler not found: $Iscc" }
 if (-not (Test-Path $InstallerRoot)) { New-Item -ItemType Directory -Path $InstallerRoot | Out-Null }
 
 $iss = Join-Path $PSScriptRoot 'installer.iss'
-Invoke-Iscc -Compiler $Iscc -Script $iss -SourceDir $selfContainedDir -Name $packageNames['setup-selfcontained'] -OutDir $InstallerRoot
-Invoke-Iscc -Compiler $Iscc -Script $iss -SourceDir $frameworkDir -Name $packageNames['setup-framework'] -OutDir $InstallerRoot
+Invoke-Iscc -Compiler $Iscc -Script $iss -FullSource $selfContainedDir -SlimSource $frameworkDir -Name $packageNames['setup'] -OutDir $InstallerRoot
 
 Write-Host "`n== artifacts ==" -ForegroundColor Cyan
 foreach ($zip in @($packageNames['zip-selfcontained'], $packageNames['zip-framework'])) {
@@ -164,7 +164,6 @@ foreach ($zip in @($packageNames['zip-selfcontained'], $packageNames['zip-framew
     if (Test-Path $path) { Write-Host ("{0,-62} {1,8:N1} MB" -f $zip, ((Get-Item $path).Length / 1MB)) }
 }
 
-foreach ($setup in @($packageNames['setup-selfcontained'], $packageNames['setup-framework'])) {
-    $path = Join-Path $InstallerRoot ($setup + '.exe')
-    if (Test-Path $path) { Write-Host ("{0,-62} {1,8:N1} MB" -f ($setup + '.exe'), ((Get-Item $path).Length / 1MB)) }
-}
+$setup = $packageNames['setup'] + '.exe'
+$setupPath = Join-Path $InstallerRoot $setup
+if (Test-Path $setupPath) { Write-Host ("{0,-62} {1,8:N1} MB" -f $setup, ((Get-Item $setupPath).Length / 1MB)) }

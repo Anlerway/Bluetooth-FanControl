@@ -1,0 +1,9 @@
+// 卸载器资源：图标 + 版本信息 + 清单
+#include "build\version.h"
+
+#define FC_FILENAME "uninstall.exe"
+#define FC_DESCRIPTION "FanControl Uninstaller"
+#include "version.inc"
+
+101 ICON "build\app.ico"
+1 24 "app.manifest"
