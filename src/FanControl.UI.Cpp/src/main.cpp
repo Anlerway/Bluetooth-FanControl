@@ -22,6 +22,8 @@ namespace {
 
 App g_app;
 HWND g_hwnd = nullptr;
+// 与 resource.rc 里的 #define IDI_ICON1 101 保持一致
+constexpr int kAppIcon = 101;
 
 void ApplyWindowStyle(HWND hwnd, bool dark) {
     BOOL useDark = dark ? TRUE : FALSE;
@@ -161,8 +163,15 @@ extern "C" __declspec(dllexport) int __stdcall FcUiRun(void) {
     wc.lpfnWndProc = WndProc;
     wc.hInstance = module;
     wc.hCursor = LoadCursorW(nullptr, IDC_ARROW);
-    wc.hIcon = LoadIconW(module, L"IDI_ICON1");
+    // 图标在 resource.rc 里是按数字 ID 101 编进去的，必须用 MAKEINTRESOURCEW 取；
+    // 早先这里传的是字符串 L"IDI_ICON1"，按名字查不到资源，标题栏一直是系统默认图标。
+    wc.hIcon = static_cast<HICON>(LoadImageW(module, MAKEINTRESOURCEW(kAppIcon), IMAGE_ICON, 0, 0,
+                                            LR_DEFAULTSIZE | LR_SHARED));
     if (wc.hIcon == nullptr) wc.hIcon = LoadIconW(nullptr, IDI_APPLICATION);
+    // 小图标单独挑 16x16，标题栏与任务栏缩略图才不会拿 256 硬缩
+    wc.hIconSm = static_cast<HICON>(LoadImageW(module, MAKEINTRESOURCEW(kAppIcon), IMAGE_ICON, 16, 16,
+                                              LR_DEFAULTCOLOR | LR_SHARED));
+    if (wc.hIconSm == nullptr) wc.hIconSm = wc.hIcon;
     wc.lpszClassName = L"FanControlUI";
     if (!RegisterClassExW(&wc) && GetLastError() != ERROR_CLASS_ALREADY_EXISTS) return 1;
 

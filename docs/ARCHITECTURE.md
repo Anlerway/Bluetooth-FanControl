@@ -67,6 +67,14 @@ LibreHardwareMonitor 的模块是内存大头：全开（CPU+GPU+主板+控制�
 
 界面渲染目标固定用 `D2D1_RENDER_TARGET_TYPE_SOFTWARE`：同一台机器上硬件 `HwndRenderTarget` 会把私有内存推到 65 MB、线程涨到 45 个（多出来的是显卡驱动线程），而界面只在收到状态帧或鼠标交互时重绘（约 2.5 次/秒），软件光栅的 CPU 代价约 4% 单核。
 
+## 图标
+
+- 唯一源文件 `src/FanControl.UI.Cpp/app.ico`（16 / 24 / 32 / 48 / 64 / 128 / 256 七档，256 档是 PNG 压缩）。
+- 界面：`resource.rc` 把图标按**数字 101** 编进 DLL，注册窗口类时用 `LoadImageW(module, MAKEINTRESOURCEW(101), IMAGE_ICON, 0, 0, LR_DEFAULTSIZE | LR_SHARED)` 取；`wc.hIconSm` 另外取 16x16，标题栏与任务栏缩略图不会拿 256 档硬缩。注意不能写成 `LoadIconW(module, L"IDI_ICON1")`——那是按字符串名查资源，数字 ID 查不到，会静默退回系统默认图标。
+- 宿主：`FanControl.Host.csproj` 的 `<ApplicationIcon>` 指向同一个 ico，资源管理器 / 任务栏 / 开始菜单用它。
+- 托盘：`TrayHost` 用 `ExtractIconExW(Environment.ProcessPath, ...)` 取 exe 内嵌图标，取不到才回退 `IDI_APPLICATION`。
+- 安装包：`installer.iss` 的 `SetupIconFile` 也是这个 ico，快捷方式与卸载列表沿用 exe 图标。
+
 ## 界面协议（进程内）
 
 没有管道了，同一份 JSON 直接走函数调用：

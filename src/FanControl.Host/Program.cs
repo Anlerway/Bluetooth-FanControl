@@ -26,11 +26,16 @@ internal static class Program
         // 与界面 DLL 中创建的窗口同一个 AppUserModelID：任务栏只有一个按钮。
         SetCurrentProcessExplicitAppUserModelID("FanControl");
 
-        using var mutex = new Mutex(true, MutexName, out var isFirstInstance);
+        // 自动化测试（截图脚本）会把 FANCONTROL_INSTANCE 设成一个标记，让互斥体与事件各带后缀，
+        // 这样在用户已经开着 FanControl 的机器上也能再起一个实例截图，互不干扰。
+        var instanceTag = Environment.GetEnvironmentVariable("FANCONTROL_INSTANCE");
+        var suffix = string.IsNullOrWhiteSpace(instanceTag) ? string.Empty : "." + instanceTag.Trim();
+
+        using var mutex = new Mutex(true, MutexName + suffix, out var isFirstInstance);
         if (!isFirstInstance)
         {
             // 已经在跑：请现有实例把窗口叫到前台，然后退出。
-            if (EventWaitHandle.TryOpenExisting(ShowWindowEventName, out var existing))
+            if (EventWaitHandle.TryOpenExisting(ShowWindowEventName + suffix, out var existing))
             {
                 using (existing)
                 {
@@ -43,7 +48,7 @@ internal static class Program
 
         // 事件要在耗时初始化之前创建：第二个实例可能在界面还没就绪时就发来信号，
         // AutoReset 事件会把这次信号保留到界面线程开始等待。
-        using var showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowWindowEventName);
+        using var showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowWindowEventName + suffix);
 
         try
         {

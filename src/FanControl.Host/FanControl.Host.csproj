@@ -11,6 +11,9 @@
     <Nullable>enable</Nullable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <Version>1.4.0</Version>
+    <!-- 与界面 DLL 共用同一个图标：exe 有了它，资源管理器、任务栏、开始菜单、托盘
+         （TrayHost 用 ExtractIconExW 取 exe 图标）才不用系统默认图标。 -->
+    <ApplicationIcon>..\FanControl.UI.Cpp\app.ico</ApplicationIcon>
   </PropertyGroup>
 
   <!-- 界面 DLL 由 src/FanControl.UI.Cpp/build.bat 产出；有就拷到输出目录，没有则跳过
