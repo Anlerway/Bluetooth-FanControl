@@ -90,6 +90,15 @@ public class FanControllerTests
     }
 
     [Fact]
+    public void TargetRpm_NoSpeedData_HoldsPreviousPwm()
+    {
+        // 只读到温度、没有转速时不能把 0 RPM 映射成首点 0%，否则风扇会被锁死在停转
+        Assert.Null(_controller.CalculateTargetPwm(FanControlMode.TargetRpm, 60, 60, 10, Curve, null, RpmCurve));
+        // 风扇停转同样没有可映射的信号
+        Assert.Null(_controller.CalculateTargetPwm(FanControlMode.TargetRpm, 60, 60, 10, Curve, 0, RpmCurve));
+    }
+
+    [Fact]
     public void TargetRpm_NullCurve_Throws()
     {
         Assert.Throws<ArgumentNullException>(

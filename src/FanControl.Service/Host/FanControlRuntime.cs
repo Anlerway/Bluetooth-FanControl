@@ -410,7 +410,9 @@ public sealed class FanControlRuntime : IAsyncDisposable
                     snapshot.GpuTemperatureCelsius ?? snapshot.CpuTemperatureCelsius ?? double.NaN,
                     config.ManualPwmPercent,
                     config.Curve,
-                    snapshot.FanRpm ?? 0,
+                    // 必须是本轮真正读到的转速：温度源与转速源不同时 snapshot.FanRpm 恒为 null，
+                    // 用它会一直把 TargetRpm 映射到曲线首点（0%），风扇根本转不起来。
+                    fanRpm,
                     config.RpmCurve);
 
                 var smoothedPwm = ApplySmoothing(config, targetPwm);

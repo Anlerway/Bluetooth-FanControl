@@ -1027,7 +1027,7 @@ void App::FillComboItems(const std::wstring& id) {
         add(TN(L"GPU 温度"), L"GpuTemp");
         add(TN(L"混合（取平均）"), L"MixedAvg");
         add(TN(L"混合（取高）"), L"Mixed");
-        add(TN(L"目标转速"), L"TargetRpm");
+        add(TN(L"CPU 风扇转速映射"), L"TargetRpm");
     } else if (id == L"set:comm") {
         add(TN(L"蓝牙 BLE"), L"Ble");
         add(TN(L"串口"), L"Com");
@@ -1377,7 +1377,10 @@ void App::OnMouseMove(int x, int y) {
     }
     std::wstring previous = hover_;
     hover_.clear();
-    for (auto& h : hits_) {
+    // hits_ 按绘制顺序追加，下拉浮层与弹窗画在最后；反向遍历才能让「最后画的」优先命中，
+    // 否则浮层条目所在位置的设置行会先命中，高亮永远落在背后那一行。
+    for (auto it = hits_.rbegin(); it != hits_.rend(); ++it) {
+        const Hit& h = *it;
         if (sx >= h.rect.left && sx <= h.rect.right && sy >= h.rect.top && sy <= h.rect.bottom) {
             // 弹窗打开时只认弹窗里的控件，否则遮罩后面的行会跟着亮
             if (bleDialogOpen_ && h.id.rfind(L"bledlg:", 0) != 0 && h.id.rfind(L"chip:bledlg:", 0) != 0) continue;
@@ -1760,7 +1763,7 @@ std::wstring App::ModeLabel(const std::wstring& mode) const {
     if (mode == L"Mixed") return fc::T(L"混合（取高）");
     if (mode == L"MixedAvg") return fc::T(L"混合（取平均）");
     if (mode == L"SystemFan") return fc::T(L"系统风扇");
-    if (mode == L"TargetRpm") return fc::T(L"目标转速");
+    if (mode == L"TargetRpm") return fc::T(L"CPU 风扇转速映射");
     return fc::T(L"CPU 温度");
 }
 

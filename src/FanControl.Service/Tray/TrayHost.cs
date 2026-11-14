@@ -12,7 +12,7 @@ public sealed class TrayHost : IDisposable
     private Thread? _thread;
     private TrayWindow? _window;
 
-    /// <summary>启动托盘线程。三个回调分别在双击/显示窗口、退出、重建连接时触发。</summary>
+    /// <summary>启动托盘线程。三个回调分别在单击（或双击）显示窗口、退出、重建连接时触发。</summary>
     public void Start(Action showUi, Action exit, Action? reconnect = null)
     {
         _window = new TrayWindow(showUi, exit, reconnect);
@@ -227,6 +227,8 @@ internal sealed class TrayWindow
             case WmTrayIcon:
                 switch ((int)(lParam.ToInt64() & 0xFFFF))
                 {
+                    // 单击就打开界面（双击仍保留：部分用户习惯双击，重复调用只是把窗口唤到前台）
+                    case Native.WmLButtonUp:
                     case Native.WmLButtonDblClk:
                         _showUi();
                         break;
@@ -461,6 +463,7 @@ internal static class Native
     public const int WmApp = 0x8000;
     public const int WmClose = 0x0010;
     public const int WmNull = 0x0000;
+    public const int WmLButtonUp = 0x0202;
     public const int WmLButtonDblClk = 0x0203;
     public const int WmRButtonUp = 0x0205;
 

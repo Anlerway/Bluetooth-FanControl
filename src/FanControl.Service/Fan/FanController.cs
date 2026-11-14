@@ -7,7 +7,7 @@ namespace FanControl.Service.Fan;
 /// 风扇控制引擎：按模式计算目标 PWM。
 /// Manual / CpuTemp / GpuTemp / Mixed 返回 0-100 的目标值；
 /// Mixed 取 CPU/GPU 温度较高者（最高温度曲线）；MixedAvg 取平均温度。
-/// TargetRpm（风扇转速映射）按实测风扇转速（0-10000）通过转速-PWM 曲线映射。
+/// TargetRpm（CPU 风扇转速映射）按实测 CPU 风扇转速（0-10000）通过转速-PWM 曲线映射。
 /// SystemFan 为历史遗留值：返回 null（不覆盖），设置页已移除该选项。
 /// </summary>
 public sealed class FanController
@@ -18,7 +18,7 @@ public sealed class FanController
         double gpuTemperatureCelsius,
         double manualPwmPercent,
         IReadOnlyList<CurvePoint> curve,
-        double fanRpm = 0,
+        double? fanRpm = null,
         IReadOnlyList<RpmCurvePoint>? rpmCurve = null)
     {
         switch (mode)
@@ -46,7 +46,14 @@ public sealed class FanController
 
             case FanControlMode.TargetRpm:
                 ArgumentNullException.ThrowIfNull(rpmCurve);
-                return CurveInterpolator.CalculateRpm(fanRpm, rpmCurve);
+                // 读不到转速（或风扇停转）时没有可映射的信号：返回 null 让宿主保持上次 PWM，
+                // 而不是把 0 RPM 映射成曲线首点（默认 0%）把风扇锁死在停转状态。
+                if (fanRpm is not double measuredRpm || measuredRpm <= 0)
+                {
+                    return null;
+                }
+
+                return CurveInterpolator.CalculateRpm(measuredRpm, rpmCurve);
 
             default:
                 throw new ArgumentOutOfRangeException(nameof(mode), mode, "未知的控制模式。");
