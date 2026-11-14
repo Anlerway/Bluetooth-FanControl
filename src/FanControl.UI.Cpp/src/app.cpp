@@ -610,6 +610,7 @@ std::wstring SourceLabel(const std::wstring& value) {
     if (value == L"AtkAcpi") return L"ATK ACPI";
     if (value == L"Wmi") return L"WMI";
     if (value == L"Aida64") return L"AIDA64";
+    if (value == L"LenovoWmi") return L"Lenovo WMI";
     if (value == L"Simulated") return fc::T(L"模拟数据");
     if (value == L"Serial") return fc::T(L"串口");
     return value;
@@ -900,16 +901,19 @@ void App::FillComboItems(const std::wstring& id) {
         add(L"WMI", L"Wmi");
         add(L"LibreHardwareMonitor", L"LibreHardwareMonitor");
         add(L"AIDA64", L"Aida64");
+        add(L"Lenovo WMI", L"LenovoWmi");
     } else if (id == L"set:gpusrc") {
         add(L"NVIDIA nvidia-smi", L"NvidiaSmiAdl");
         add(L"LibreHardwareMonitor", L"LibreHardwareMonitor");
         add(L"ATK ACPI", L"AtkAcpi");
         add(L"AIDA64", L"Aida64");
+        add(L"Lenovo WMI", L"LenovoWmi");
     } else if (id == L"set:fansrc") {
         add(L"ATK ACPI", L"AtkAcpi");
         add(L"WMI", L"Wmi");
         add(L"LibreHardwareMonitor", L"LibreHardwareMonitor");
         add(L"AIDA64", L"Aida64");
+        add(L"Lenovo WMI", L"LenovoWmi");
     } else if (id == L"set:mode") {
         add(TN(L"手动 PWM"), L"Manual");
         add(TN(L"CPU 温度"), L"CpuTemp");
@@ -1504,6 +1508,7 @@ std::wstring App::GpuSourceLabel() const {
     if (source.empty() || source == L"NvidiaSmiAdl") return L"NVIDIA nvidia-smi";
     if (source == L"AtkAcpi") return L"ATK ACPI";
     if (source == L"Aida64") return L"AIDA64";
+    if (source == L"LenovoWmi") return L"Lenovo WMI";
     return L"LibreHardwareMonitor";
 }
 

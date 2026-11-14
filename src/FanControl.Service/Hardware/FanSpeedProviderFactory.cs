@@ -20,6 +20,7 @@ public sealed class FanSpeedProviderFactory
             FanSpeedSource.Wmi => Get<WmiFanSpeedProvider>(),
             FanSpeedSource.LibreHardwareMonitor => Get<LibreHardwareMonitorFanSpeedProvider>(),
             FanSpeedSource.Aida64 => Get<Aida64FanSpeedProvider>(),
+            FanSpeedSource.LenovoWmi => Get<Lenovo.LenovoWmiFanSpeedProvider>(),
             FanSpeedSource.Simulated => Get<SimulatedFanSpeedProvider>(),
             _ => throw new ArgumentOutOfRangeException(nameof(source), source, "未知的风扇转速数据源。"),
         };

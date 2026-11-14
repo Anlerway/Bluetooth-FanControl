@@ -384,9 +384,13 @@ public sealed class FanControlRuntime : IAsyncDisposable
 
                 // 转速数据源独立选择：与温度源相同时直接复用快照（避免重复读取），
                 // 不同则调用所选转速 Provider；读取失败不中断本轮采样。
-                // 两个枚举按相同编号对齐（AtkAcpi=0 … Simulated=99），故按数值比较。
+                // 按枚举名比较而不是数值：LenovoWmi 在温度枚举是 5、转速枚举是 4，
+                // 数值比较会把「联想温度源 + 联想转速源」误判成不同源。
                 var fanRpm = snapshot.FanRpm;
-                if ((int)config.FanSpeedSource != (int)config.TemperatureSource)
+                if (!string.Equals(
+                        config.FanSpeedSource.ToString(),
+                        config.TemperatureSource.ToString(),
+                        StringComparison.Ordinal))
                 {
                     try
                     {

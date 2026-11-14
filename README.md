@@ -40,7 +40,7 @@
 
 ### 上位机（软件）
 
-- **多温度数据源**：LibreHardwareMonitor/ 华硕 ATKACPI / WMI / AIDA64 / NVIDIA-SMI / ADL ；
+- **多温度数据源**：LibreHardwareMonitor / 华硕 ATKACPI / WMI / AIDA64 / NVIDIA-SMI / ADL / 联想 WMI；
 - **CPU / GPU 获取方式独立选择**，针对多GPU用户可自由选择GPU；
 - **可调节温度-风扇曲线**：5 种控制模式（手动 / CPU 温度 / GPU 温度 / 混合取最高 / 混合平均 / 目标转速），温度曲线与转速曲线均可编辑，风扇曲线支持平滑；
 - **自动重连**：BLE / COM 双通信链路，连接断开自动按轮询重连，支持手动重连；
@@ -166,6 +166,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File installer\_build-release.ps1
 | WMI | MSAcpi_ThermalZoneTemperature 热区温度 |
 | AIDA64 | 注册表 SensorValues（需 AIDA64 开启“允许监控数据写入注册表”） |
 | NVIDIA-SMI / ADL | GPU 专用链路：NVIDIA 官方工具 → AMD 驱动库 |
+| Lenovo WMI | 联想机型专用：`LENOVO_FAN_METHOD` / `LENOVO_FAN_TABLE_DATA`，只读温度与转速（参考 LenovoLegionToolkit） |
 
 ## 通信协议
 
@@ -180,6 +181,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File installer\_build-release.ps1
 | --- | --- | --- |
 | 垃圾研究社 | 适配的硬件开源方案 | <https://www.bilibili.com/video/BV1Lr421M7u2/> |
 | G-Helper | 华硕设备控制参考 | <https://github.com/seerge/g-helper> |
+| LenovoLegionToolkit | 联想设备控制参考 | <https://github.com/LenovoLegionToolkit-Team/LenovoLegionToolkit> |
 | LibreHardwareMonitor | 硬件监控库 | <https://github.com/LibreHardwareMonitor/LibreHardwareMonitor> |
 
 ## 免责声明

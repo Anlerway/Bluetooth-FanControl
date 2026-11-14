@@ -67,6 +67,35 @@ LibreHardwareMonitor 的模块是内存大头：全开（CPU+GPU+主板+控制�
 
 界面渲染目标固定用 `D2D1_RENDER_TARGET_TYPE_SOFTWARE`：同一台机器上硬件 `HwndRenderTarget` 会把私有内存推到 65 MB、线程涨到 45 个（多出来的是显卡驱动线程），而界面只在收到状态帧或鼠标交互时重绘（约 2.5 次/秒），软件光栅的 CPU 代价约 4% 单核。
 
+## 硬件数据源
+
+温度与转速各有一个策略接口（`ITemperatureProvider` / `IFanSpeedProvider`），`TemperatureProviderFactory` / `FanSpeedProviderFactory` 按配置的枚举值从容器里取单例，界面只发枚举名。
+
+| 枚举值 | 温度 | 转速 | 实现要点 |
+| --- | --- | --- | --- |
+| `AtkAcpi` | ✓ | ✓ | 华硕 `\\.\ATKACPI` + `DeviceIoControl`（同 G-Helper） |
+| `Wmi` | ✓ | ✓ | `MSAcpi_ThermalZoneTemperature` / `Win32_Fan` |
+| `LibreHardwareMonitor` | ✓ | ✓ | 单例 `Computer`，按配置只开需要的模块（见上节内存说明） |
+| `Aida64` | ✓ | ✓ | AIDA64 注册表 `SensorValues` |
+| `NvidiaSmiAdl` | 仅 GPU | — | GPU 专用：nvidia-smi → ADL |
+| `LenovoWmi` | ✓ | ✓ | 联想专有 WMI，见下 |
+| `Simulated` | ✓ | ✓ | 演示数据 |
+
+转速源与温度源同名时直接复用快照里的 `FanRpm`，否则另调转速 Provider。这里按**枚举名**比较而不是数值：`LenovoWmi` 在温度枚举里是 5、在转速枚举里是 4（温度枚举的 4 被 `NvidiaSmiAdl` 占着），按数值比较会把「联想温度源 + 联想转速源」误判成两个不同的源。
+
+### 联想机型（Lenovo WMI）
+
+参照 [Lenovo Legion Toolkit](https://github.com/LenovoLegionToolkit-Team/LenovoLegionToolkit) 的 WMI 调用面实现，**只读**（温度 + 转速），不写风扇曲线。代码在 `src/FanControl.Service/Hardware/Lenovo/`：
+
+- `LenovoWmiBackend`（实现 `ILenovoWmiBackend`，方便单测替换）：
+  - `LENOVO_FAN_TABLE_DATA`：只读表数据类，每行给出 `Fan_Id` / `Sensor_ID`、`FanTable_Data`（档位 → RPM）与 `SensorTable_Data`（档位 → 温度阈值，127 表示该档无效）；
+  - `LENOVO_FAN_METHOD`：`Fan_GetCurrentFanSpeed(FanID)`、`Fan_GetCurrentSensorTemperature(SensorID)`；
+  - `LENOVO_GAMEZONE_DATA`：`GetCPUTemperature` / `GetGPUTemperature`，作为没有传感器表时的兜底。
+- 传感器与风扇编号从表里发现：`Sensor_ID` 最小的当 CPU、次小的当 GPU，`Fan_Id` 升序各读一遍取最大转速；`FanTable_Data` 的下标就是档位。
+- 固件返回的风扇原始值单位随机型不同：`0..10` 按档位表查 RPM，`0..100` 按 `CurrentFanMaxSpeed` 折算百分比，`>100` 直接当 RPM，都对不上时返回 null。
+- 非联想机型上 `LENOVO_*` 类枚举不到任何实例（判厂商走 `Win32_ComputerSystem.Manufacturer`），`IsAvailable` 为 false，Provider 直接返回空值并只记一条警告。
+- 不写风扇曲线：LLT 自己的曲线控件也只剩历史代码，而 [LenovoLegionLinux 的已知问题](https://github.com/johnfanv2/LenovoLegionLinux/blob/main/docs/zh-hans/known-issues.md) 记录了不同代际的档位 / 百分比单位差异，写错会让部分机型直接断电。风扇输出的唯一通道仍然是蓝牙 BLE / 串口。
+
 ## 图标
 
 - 唯一源文件 `src/FanControl.UI.Cpp/app.ico`（16 / 24 / 32 / 48 / 64 / 128 / 256 七档，256 档是 PNG 压缩）。

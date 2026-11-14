@@ -9,5 +9,7 @@ public enum TemperatureSource
     Aida64 = 3,
     // GPU 专用数据源：NVIDIA nvidia-smi → AMD ADL（不能作为 CPU 数据源）
     NvidiaSmiAdl = 4,
+    // 联想专有 WMI：LENOVO_FAN_METHOD / LENOVO_FAN_TABLE_DATA（只读，非联想机型无数据）
+    LenovoWmi = 5,
     Simulated = 99,
 }

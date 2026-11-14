@@ -38,7 +38,7 @@ A full remake built on top of the 垃圾研究社 open-source hardware:
 
 ### Host app
 
-- **Multiple temperature sources**: LibreHardwareMonitor / ASUS ATKACPI / WMI / AIDA64 / NVIDIA-SMI / ADL;
+- **Multiple temperature sources**: LibreHardwareMonitor / ASUS ATKACPI / WMI / AIDA64 / NVIDIA-SMI / ADL / Lenovo WMI;
 - **Independent CPU / GPU sources** — multi-GPU users can freely choose which GPU to read;
 - **Adjustable temperature-fan curves**: 5 control modes (manual / CPU temp / GPU temp / mixed max / mixed average / target RPM), editable temperature and RPM curves, with fan-curve smoothing;
 - **Auto-reconnect**: BLE / COM dual channels; automatically retries reconnection on disconnect, with manual reconnect support;
@@ -163,6 +163,7 @@ Run `FanControl.exe` from the publish output (the installer, shortcuts and unins
 | WMI | MSAcpi_ThermalZoneTemperature thermal zones |
 | AIDA64 | Registry SensorValues (requires “Allow monitoring data to registry” in AIDA64) |
 | NVIDIA-SMI / ADL | GPU-only chain: NVIDIA official tool → AMD driver library |
+| Lenovo WMI | Lenovo laptops only: `LENOVO_FAN_METHOD` / `LENOVO_FAN_TABLE_DATA`, read-only temperature and fan RPM (reference: LenovoLegionToolkit) |
 
 ## Protocol
 
@@ -177,6 +178,7 @@ One ASCII line per frame, terminated with `\r\n`:
 | --- | --- | --- |
 | 垃圾研究社 | Adapted open-source hardware solution | <https://www.bilibili.com/video/BV1Lr421M7u2/> |
 | G-Helper | ASUS device control reference | <https://github.com/seerge/g-helper> |
+| LenovoLegionToolkit | Lenovo device control reference | <https://github.com/LenovoLegionToolkit-Team/LenovoLegionToolkit> |
 | LibreHardwareMonitor | Hardware monitoring library | <https://github.com/LibreHardwareMonitor/LibreHardwareMonitor> |
 
 ## Disclaimer

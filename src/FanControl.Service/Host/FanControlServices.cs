@@ -2,6 +2,7 @@ using FanControl.Service.Communication;
 using FanControl.Service.Config;
 using FanControl.Service.Fan;
 using FanControl.Service.Hardware;
+using FanControl.Service.Hardware.Lenovo;
 using FanControl.Service.Logging;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -38,12 +39,15 @@ public static class FanControlServices
         services.AddSingleton<LibreHardwareMonitorTemperatureProvider>();
         services.AddSingleton<Aida64TemperatureProvider>();
         services.AddSingleton<SimulatedTemperatureProvider>();
+        services.AddSingleton<ILenovoWmiBackend, LenovoWmiBackend>();
+        services.AddSingleton<LenovoWmiTemperatureProvider>();
 
         services.AddSingleton<AtkAcpiFanSpeedProvider>();
         services.AddSingleton<WmiFanSpeedProvider>();
         services.AddSingleton<LibreHardwareMonitorFanSpeedProvider>();
         services.AddSingleton<Aida64FanSpeedProvider>();
         services.AddSingleton<SimulatedFanSpeedProvider>();
+        services.AddSingleton<LenovoWmiFanSpeedProvider>();
 
         services.AddSingleton<CommunicationChannelFactory>();
         services.AddSingleton<ComChannel>();

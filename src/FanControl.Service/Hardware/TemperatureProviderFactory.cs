@@ -20,6 +20,7 @@ public sealed class TemperatureProviderFactory
             TemperatureSource.Wmi => Get<WmiTemperatureProvider>(),
             TemperatureSource.LibreHardwareMonitor => Get<LibreHardwareMonitorTemperatureProvider>(),
             TemperatureSource.Aida64 => Get<Aida64TemperatureProvider>(),
+            TemperatureSource.LenovoWmi => Get<Lenovo.LenovoWmiTemperatureProvider>(),
             TemperatureSource.Simulated => Get<SimulatedTemperatureProvider>(),
             TemperatureSource.NvidiaSmiAdl => throw new InvalidOperationException(
                 "NVIDIA-SMI / ADL 仅用作 GPU 温度源，不能作为 CPU 温度数据源。"),

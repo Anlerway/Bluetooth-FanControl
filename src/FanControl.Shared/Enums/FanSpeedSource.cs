@@ -10,5 +10,7 @@ public enum FanSpeedSource
     Wmi = 1,
     LibreHardwareMonitor = 2,
     Aida64 = 3,
+    // 联想专有 WMI：Fan_GetCurrentFanSpeed + 档位表换算（编号与温度枚举不同，故运行时不按数值比较）
+    LenovoWmi = 4,
     Simulated = 99,
 }
