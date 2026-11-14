@@ -42,6 +42,7 @@ struct Snapshot {
     bool backendConnected = false;
     bool deviceConnected = true;
     std::wstring commMode = L"蓝牙 · LAPTOP-FAN";
+    std::wstring connectionState = L"Waiting";  // Waiting / Connected / Reconnecting
     std::wstring lastError;
     std::wstring errorCode;
     std::wstring errorArg1;
@@ -102,12 +103,15 @@ private:
     void DrawCurve(float x, float y, float w);
     void DrawAbout(float x, float y, float w);
 
-    // 设备/端口/GPU 选择弹窗（立即模式，列表项由后台推送）
-    enum class Dialog { None, BleDevices, Ports, Gpus };
-    void DrawDialog(float w, float h);
-    void OpenDialog(Dialog kind);
-    void CloseDialog();
-    void SelectDialogItem(int index);
+    // 行内下拉（1.3.0 里这些字段都是 ComboBox）：点行 → 在行下方浮出列表，不再弹模态窗。
+    struct ComboItem { std::wstring label; std::wstring value; };
+    void DrawCombo(float w, float h);
+    void OpenCombo(const std::wstring& id);
+    void CloseCombo();
+    void ChooseComboItem(int index);
+    void FillComboItems(const std::wstring& id);
+    // 下拉当前选中项的文字（用于在浮层里打勾）：直接从 config_ 推，避免另存一份状态。
+    std::wstring CurrentComboLabel(const std::wstring& id) const;
 
     // widgets
     float Card(float x, float y, float w, const std::wstring& title, float height);
@@ -115,16 +119,24 @@ private:
                    const std::wstring& subtitle, const std::wstring& value);
     void RowToggle(float x, float y, float w, float h, const std::wstring& id, const std::wstring& title,
                    const std::wstring& subtitle, bool on);
+    // 值用 double：平滑窗口 0.5–30 s、采样间隔 0.1–5.0 s 都需要小数，显示文本由调用方给。
     void RowSlider(float x, float y, float w, float h, const std::wstring& id, const std::wstring& title,
-                   const std::wstring& subtitle, int value, int lo, int hi, const wchar_t* unit = L" ms");
+                   const std::wstring& subtitle, double value, double lo, double hi,
+                   const std::wstring& valueText);
+    // 下拉行：右侧「当前值 + 箭头」，点开由 DrawCombo 画浮层
+    void RowCombo(float x, float y, float w, float h, const std::wstring& id, const std::wstring& title,
+                  const std::wstring& subtitle, const std::wstring& value);
+    // 连接状态行：右侧是值 + 一个「重新连接」小按钮
+    void RowStatus(float x, float y, float w, float h, const std::wstring& id, const std::wstring& title,
+                   const std::wstring& subtitle, const std::wstring& value);
     // 滑块几何：立即模式绘制时记下轨道位置，点击时按 x 反算取值（点哪里就是多少，而不是循环跳档）。
     struct SliderGeom {
         float trackL = 0;
         float trackR = 0;
-        int lo = 0;
-        int hi = 100;
+        double lo = 0;
+        double hi = 100;
     };
-    int SliderValueAt(const std::wstring& id, int clickX, int fallback) const;
+    double SliderValueAt(const std::wstring& id, int clickX, double fallback) const;
     std::unordered_map<std::wstring, SliderGeom> sliders_;
 
     void Switch(float x, float y, bool on);
@@ -176,11 +188,16 @@ private:
     bool autostart_ = false;
     bool notify_ = true;
 
-    Dialog dialog_ = Dialog::None;
-    bool dialogBusy_ = false;
-    std::vector<std::pair<std::wstring, std::wstring>> dialogItems_;
-    int dialogScroll_ = 0;
-    std::wstring dialogTitle_;
+    std::wstring comboOpen_;
+    int comboScroll_ = 0;  // 打开中的下拉 id，空 = 全关
+    std::vector<ComboItem> comboItems_;
+    bool comboBusy_ = false;
+    D2D1_RECT_F comboAnchor_{};
+    // 曲线页当前选中的点（删除点用），-1 = 没有
+    int curveSelected_ = -1;
+    // SystemConfig 侧状态
+    bool logEnabled_ = true;
+    std::wstring userDataLocation_ = L"AppData";
     std::wstring toast_;
     DWORD toastUntil_ = 0;
 
@@ -197,6 +214,15 @@ private:
     std::wstring LangLabel() const;
     std::wstring ModeLabel(const std::wstring& mode) const;
     std::wstring DeviceLabel() const;
+    std::wstring GpuSourceLabel() const;
+    std::wstring DataDirLabel() const;
+    std::wstring ConnectionLabel() const;
+    void SendSystem(const char* key, const std::string& valueJson);
+    void ReloadFromBackend();
+    // 设置行点击分发：下拉行开浮层、滑块按位置取值、开关取反（1.3.0 的设置项都走这里）
+    void HandleSettingClick(const std::wstring& id, D2D1_RECT_F rect, int clickX);
+    // 曲线页：在 plot 内某点插入一个控制点（空白处点击 / 「添加点」）
+    void AddCurvePointAt(float sx, float sy);
     void SendString(const char* key, const std::wstring& value);
     void SendAutostart(bool enabled);
 

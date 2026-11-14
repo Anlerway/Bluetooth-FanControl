@@ -7,12 +7,16 @@
 | `src/FanControl.Shared` | 共享契约：枚举、模型（AppConfig / DataPacket / SystemConfig）、IPC 信封与分帧、MAC 匹配工具 |
 | `src/FanControl.Service` | 类库：采样与通信循环、硬件数据源（LibreHardwareMonitor / ATK ACPI / WMI / AIDA64 / 模拟）、BLE 与 COM 通道、配置、日志、原生托盘 |
 | `src/FanControl.Host` | 后台守护进程（C#，`requireAdministrator`）：装配运行时、托盘、命名管道服务端、唤醒界面 |
-| `src/FanControl.UI.Cpp` | 界面（C++20，Direct2D + DirectWrite 自绘，Win11 设置风格）：只做呈现与交互，通过管道读写后台 |
+| `src/FanControl.UI.Cpp` | 界面（C++20，Direct2D + DirectWrite 自绘，Win11 设置风格）：只做呈现与交互，通过管道读写后台；同目录构建出启动器 `FanControl.exe` |
 | `tests/FanControl.Tests` | xUnit 单元测试 |
 
 前后台分离的两个进程：
 
 ```text
+FanControl.exe (启动器, requireAdministrator, 一次 UAC)
+   ├─ 启动 FanControl.Host.exe（未运行则拉起）
+   └─ SetEvent(Local\FanControl.ShowWindow) ──→ 后台唤出界面
+
 FanControl.Host.exe (管理员, 常驻)          FanControl.UI.exe (普通权限, 按需)
 ├─ FanControlRuntime                      ├─ App (D2D 立即模式 UI)
 │   ├─ 采样循环 (100–5000 ms)  ──┐        ├─ IpcClient (overlapped 读写, 带超时)
@@ -27,7 +31,9 @@ FanControl.Host.exe (管理员, 常驻)          FanControl.UI.exe (普通权限
 
 - 后台单实例：互斥体 `Local\FanControl.Host`；第二次启动只 `Set` 事件 `Local\FanControl.ShowWindow` 后退出，由已在运行的实例唤出界面。
 - 界面单实例：互斥体 `Local\FanControl.UI`；重复启动时 `FindWindowW(L"FanControlUI")` 把已有窗口激活。
-- 界面找不到后台时，按自身目录拼 `FanControl.Host.exe` 并用 `ShellExecuteW(..., L"runas", ...)` 提权拉起，随后重试连接（8 × 250 ms）。
+- 用户入口是启动器 `FanControl.exe`（`src/FanControl.UI.Cpp/src/launcher.cpp`，DLL 清单带 `requireAdministrator`）：后台没跑就 `CreateProcessW` 拉起，再打开事件 `Local\FanControl.ShowWindow` 让后台唤出界面，整套只弹一次 UAC。`--autostart` 模式只启动后台（给计划任务用）。
+- 界面找不到后台时，按自身目录优先 `runas` 拉起 `FanControl.exe`（没有启动器才退回 `FanControl.Host.exe`），随后重试连接（8 × 250 ms）。
+- 开机自启：计划任务是 `FanControl`，动作 <安装目录>\FanControl.exe --autostart（与 1.3.0 完全一致，升级后旧任务继续有效）；`AutostartManager.ResolveLaunchTarget()` 优先选同目录的启动器。
 - 进程组：后台用 `CreateProcessW` 起 `FanControl.UI.exe --spawned` 并 `AssignProcessToJobObject`，job 带 `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`，后台退出时界面一起结束，任务管理器里两者归为一行。
 - 已知取舍：由管理员后台拉起的界面会继承管理员令牌。
 
@@ -65,7 +71,7 @@ FanControl.Host.exe (管理员, 常驻)          FanControl.UI.exe (普通权限
 管道名 `FanControl.Host.v1`，协议版本 1，帧格式与字段见 [PROTOCOL.md](PROTOCOL.md)。
 
 - 后台连上即推一份 `state`，随后每 400 ms 推一次；配置变更额外广播 `config`。
-- 界面命令：`hello` / `getState` / `set`（按 key 改单个配置项）/ `setCurve` / `setRpmCurve` / `reconnect` / `showWindow`。
+- 界面命令：`hello` / `getState` / `set`（按 key 改单个配置项）/ `setSystem`（日志开关、数据目录）/ `setCurve` / `setRpmCurve` / `reconnect` / `showWindow` / `scanBle` / `listPorts` / `listGpus` / `setAutostart`。
 - 界面侧句柄以 `FILE_FLAG_OVERLAPPED` 打开，读写都带超时；**不能**在连接后立刻同步写——后台先写首帧，同步写会把界面线程堵在管道缓冲上。
 
 ## 本地化

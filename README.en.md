@@ -79,8 +79,9 @@ A full remake built on top of the 垃圾研究社 open-source hardware:
 
 ## Architecture
 
-Two processes:
+Two processes plus one launcher:
 
+- **`FanControl.exe`** (C++, administrator manifest) is the single entry point: it starts the daemon if needed and asks it to show the UI — one UAC prompt in total;
 - **`FanControl.Host.exe`** (C#, administrator) runs resident and owns the sampling loop, PWM computation, BLE/COM communication, config persistence and the tray icon;
 - **`FanControl.UI.exe`** (C++20 + Direct2D/DirectWrite, standard user) is started on demand and talks to the daemon over the `FanControl.Host.v1` named pipe; closing the UI leaves fan control running.
 
@@ -142,12 +143,13 @@ The script builds the C++ UI, publishes the daemon in both flavors, copies `FanC
 
 ## Run
 
-Run `FanControl.UI.exe` from the publish output (or use the installer / portable zip from a release). If the daemon is not running, the UI elevates and starts `FanControl.Host.exe`; you can also run the daemon alone and stay in the tray:
+Run `FanControl.exe` from the publish output (the installer, shortcuts and uninstaller all point at it). Running `FanControl.UI.exe` directly also works — it elevates and starts the launcher when the daemon is missing:
 
 - UI: dashboard (live temperatures/trend), settings, curve editor, about;
 - Tray (owned by the daemon): open UI / reconnect / auto-start / exit; closing the UI keeps fan control running;
 - The daemon needs administrator rights (hardware sensors); auto-start runs silently with highest privileges via Task Scheduler;
-- Both exes must sit in the same folder (the UI looks for the daemon next to itself and vice versa).
+- All three exes must sit in the same folder (the launcher looks for the daemon, the UI looks for the launcher, the daemon starts the UI next to itself);
+- The auto-start scheduled task runs `<install dir>\FanControl.exe --autostart`, exactly like 1.3.0, so upgrading keeps the existing task working.
 
 ## Temperature sources
 

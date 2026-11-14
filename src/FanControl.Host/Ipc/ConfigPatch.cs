@@ -52,7 +52,7 @@ internal static class ConfigPatch
             case "autoreconnectble":
                 return TryBool(current, value, flag => current with { AutoReconnectBle = flag }, out updated, out error);
             case "pwmsmoothingwindowseconds":
-                return TryDouble(current, value, 0, 30, number => current with { PwmSmoothingWindowSeconds = number }, out updated, out error);
+                return TryDouble(current, value, 0.5, 30, number => current with { PwmSmoothingWindowSeconds = number }, out updated, out error);
             case "notifyonbledisconnect":
                 return TryBool(current, value, flag => current with { NotifyOnBleDisconnect = flag }, out updated, out error);
             case "notifyontemperatureerror":

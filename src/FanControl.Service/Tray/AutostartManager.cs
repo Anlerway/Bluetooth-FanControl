@@ -18,9 +18,31 @@ public static class AutostartManager
         return await RunSchTasksAsync($"/Query /TN \"{TaskName}\"") == 0;
     }
 
+    /// <summary>
+    /// 自启注册的目标程序：优先用启动器 FanControl.exe（与 1.3.0 的任务动作完全一致，
+    /// 老版本留下的任务在升级后依然有效），没有启动器时退回守护进程自身。
+    /// </summary>
+    private static string ResolveLaunchTarget()
+    {
+        var exe = Environment.ProcessPath
+            ?? throw new FanControlException(ErrorInfo.Of("autostart.noProcessPath", "无法获取进程路径。"));
+
+        var directory = Path.GetDirectoryName(exe);
+        if (!string.IsNullOrEmpty(directory))
+        {
+            var launcher = Path.Combine(directory, "FanControl.exe");
+            if (File.Exists(launcher))
+            {
+                return launcher;
+            }
+        }
+
+        return exe;
+    }
+
     public static async Task EnableAsync()
     {
-        var exe = Environment.ProcessPath ?? throw new FanControlException(ErrorInfo.Of("autostart.noProcessPath", "无法获取进程路径。"));
+        var exe = ResolveLaunchTarget();
         var arguments =
             $"/Create /TN \"{TaskName}\" " +
             $"/TR \"\\\"{exe}\\\" --autostart\" " +

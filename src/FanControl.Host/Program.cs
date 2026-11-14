@@ -40,9 +40,13 @@ internal static class Program
             return 0;
         }
 
+        // 事件要在耗时初始化之前就创建：启动器（FanControl.exe）可能在守护进程还没就绪时
+        // 就发来“显示界面”的信号，AutoReset 事件会把这次信号保留到界面线程开始等待。
+        using var showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowWindowEventName);
+
         try
         {
-            return RunAsync(args).GetAwaiter().GetResult();
+            return RunAsync(args, showEvent).GetAwaiter().GetResult();
         }
         catch (Exception ex)
         {
@@ -52,7 +56,7 @@ internal static class Program
         }
     }
 
-    private static async Task<int> RunAsync(string[] args)
+    private static async Task<int> RunAsync(string[] args, EventWaitHandle showEvent)
     {
         // 日志目录取决于 system.json，所以先用一个最小 ConfigManager 把它读出来，
         // 再按它的结果装配完整的服务容器（与旧版 UI 启动顺序一致）。
@@ -108,10 +112,10 @@ internal static class Program
 
         logger.LogInformation("守护进程已启动，日志目录 {LogDirectory}", logDirectory);
 
-        await using var ipc = new IpcServer(runtime, launcher.Show, logger);
+        var systemSettings = new SystemSettings(earlyConfigManager, systemConfig);
+        await using var ipc = new IpcServer(runtime, systemSettings, launcher.Show, logger);
         ipc.Start();
 
-        using var showEvent = new EventWaitHandle(false, EventResetMode.AutoReset, ShowWindowEventName);
         var showThread = new Thread(() =>
         {
             while (!shutdown.IsCancellationRequested)

@@ -17,13 +17,13 @@ internal static class StateJson
     // 中文提示/设备名按 UTF-8 原样输出，避免 \uXXXX 转义（C++ 客户端只做最简 JSON 解析）。
     private static readonly JsonWriterOptions WriterOptions = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
-    public static string BuildState(FanControlRuntime runtime, bool autostart)
-        => Build(runtime, includeConfig: true, eventName: "state", autostart: autostart);
+    public static string BuildState(FanControlRuntime runtime, bool autostart, SystemConfig? system = null)
+        => Build(runtime, includeConfig: true, eventName: "state", autostart: autostart, system: system);
 
-    public static string BuildConfig(FanControlRuntime runtime, bool autostart)
-        => Build(runtime, includeConfig: true, eventName: "config", autostart: autostart);
+    public static string BuildConfig(FanControlRuntime runtime, bool autostart, SystemConfig? system = null)
+        => Build(runtime, includeConfig: true, eventName: "config", autostart: autostart, system: system);
 
-    private static string Build(FanControlRuntime runtime, bool includeConfig, string eventName, bool autostart)
+    private static string Build(FanControlRuntime runtime, bool includeConfig, string eventName, bool autostart, SystemConfig? system)
     {
         var buffer = new ArrayBufferWriter<byte>(1024);
         using (var writer = new Utf8JsonWriter(buffer, WriterOptions))
@@ -38,7 +38,7 @@ internal static class StateJson
             }
 
             writer.WritePropertyName("state");
-            WriteRuntime(writer, runtime, autostart);
+            WriteRuntime(writer, runtime, autostart, system);
 
             writer.WriteEndObject();
         }
@@ -97,7 +97,7 @@ internal static class StateJson
         writer.WriteEndObject();
     }
 
-    private static void WriteRuntime(Utf8JsonWriter writer, FanControlRuntime runtime, bool autostart)
+    private static void WriteRuntime(Utf8JsonWriter writer, FanControlRuntime runtime, bool autostart, SystemConfig? system)
     {
         var packet = runtime.LatestPacket;
         var config = runtime.CurrentConfig;
@@ -124,6 +124,8 @@ internal static class StateJson
         writer.WriteString("commErrorArg1", commError?.Arg1 ?? string.Empty);
         writer.WriteString("commErrorArg2", commError?.Arg2 ?? string.Empty);
         writer.WriteBoolean("autostart", autostart);
+        writer.WriteBoolean("logEnabled", system?.LogEnabled ?? true);
+        writer.WriteString("userDataLocation", (system?.UserDataLocation ?? ConfigLocation.AppData).ToString());
         writer.WriteNumber("timestamp", packet?.Timestamp.ToUnixTimeMilliseconds() ?? 0);
         writer.WriteEndObject();
     }

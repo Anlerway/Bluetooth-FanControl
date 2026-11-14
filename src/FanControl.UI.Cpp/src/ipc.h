@@ -62,6 +62,9 @@ struct State {
     std::wstring commErrorArg2;
     bool connected = false;
     bool autostart = false;
+    // SystemConfig 侧（与 AppConfig 分开存，界面上一组「数据目录 / 日志」就是它）
+    bool logEnabled = true;
+    std::wstring userDataLocation = L"AppData";
     long long timestamp = 0;
 };
 
@@ -114,6 +117,8 @@ public:
     bool ListPorts();
     bool ListGpus();
     bool SetAutostart(bool enabled);
+    /// SystemConfig（日志开关、数据目录）走单独命令，后台会落盘 system.json
+    bool SetSystem(const std::string& key, const std::string& valueJson);
 
 private:
     void* pipe_ = nullptr;

@@ -235,6 +235,11 @@ private:
 
 std::wstring Str(const JValue* v) { return v && v->kind == JValue::Str ? Utf8ToWide(v->str) : std::wstring(); }
 
+std::wstring StrOr(const JValue* v, const std::wstring& fallback) {
+    if (!v || v->kind != JValue::Str) return fallback;
+    return Utf8ToWide(v->str);
+}
+
 double Num(const JValue* v, double fallback = 0) {
     if (!v) return fallback;
     if (v->kind == JValue::Num) return v->num;
@@ -311,6 +316,8 @@ void FillState(const JValue& node, State& state) {
     state.commErrorArg2 = Str(node.Get("commErrorArg2"));
     state.connected = Bool(node.Get("connected"));
     state.autostart = Bool(node.Get("autostart"));
+    state.logEnabled = Bool(node.Get("logEnabled"), state.logEnabled);
+    state.userDataLocation = StrOr(node.Get("userDataLocation"), state.userDataLocation);
     state.timestamp = static_cast<long long>(Num(node.Get("timestamp")));
 }
 
@@ -533,6 +540,11 @@ bool IpcClient::ScanBleDevices() { return Send("{\"cmd\":\"scanBle\"}"); }
 bool IpcClient::ListPorts() { return Send("{\"cmd\":\"listPorts\"}"); }
 
 bool IpcClient::ListGpus() { return Send("{\"cmd\":\"listGpus\"}"); }
+
+bool IpcClient::SetSystem(const std::string& key, const std::string& valueJson) {
+    std::string json = "{\"cmd\":\"setSystem\",\"key\":\"" + key + "\",\"value\":" + valueJson + "}";
+    return Send(json);
+}
 
 bool IpcClient::SetAutostart(bool enabled) {
     return Send(std::string("{\"cmd\":\"setAutostart\",\"value\":") + (enabled ? "true" : "false") + "}");

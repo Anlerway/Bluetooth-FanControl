@@ -308,7 +308,8 @@ void App::RowToggle(float x, float y, float w, float h, const std::wstring& id, 
 }
 
 void App::RowSlider(float x, float y, float w, float h, const std::wstring& id, const std::wstring& title,
-                    const std::wstring& subtitle, int value, int lo, int hi, const wchar_t* unit) {
+                    const std::wstring& subtitle, double value, double lo, double hi,
+                    const std::wstring& valueText) {
     D2D1_RECT_F r = D2D1::RectF(x, y, x + w, y + h);
     if (Hovered(id)) FillRound(r, 4.0f, theme_.controlHover);
     Text(title, D2D1::RectF(x + 16, y + h / 2 - 19, x + w - 340, y + h / 2 - 1), fBody_, theme_.textPrimary);
@@ -317,21 +318,53 @@ void App::RowSlider(float x, float y, float w, float h, const std::wstring& id, 
     // 轨道右侧给数值留出固定宽度，避免滑块推到最右时压住文字。
     float trackL = x + w - 320, trackR = x + w - 140, cy = y + h / 2;
     FillRound(D2D1::RectF(trackL, cy - 2, trackR, cy + 2), 2.0f, theme_.controlBorder);
-    float ratio = (value - lo) / static_cast<float>(hi - lo);
-    FillRound(D2D1::RectF(trackL, cy - 2, trackL + (trackR - trackL) * ratio, cy + 2), 2.0f, theme_.accent);
-    float kx = trackL + (trackR - trackL) * ratio;
+    const double ratio = hi > lo ? std::clamp((value - lo) / (hi - lo), 0.0, 1.0) : 0.0;
+    FillRound(D2D1::RectF(trackL, cy - 2, trackL + static_cast<float>((trackR - trackL) * ratio), cy + 2), 2.0f,
+              theme_.accent);
+    float kx = trackL + static_cast<float>((trackR - trackL) * ratio);
     FillRound(D2D1::RectF(kx - 10, cy - 10, kx + 10, cy + 10), 10.0f, theme_.controlBg);
     StrokeRound(D2D1::RectF(kx - 10, cy - 10, kx + 10, cy + 10), 10.0f, theme_.controlBorder);
-    TextRight(Fmt(L"%d%s", value, unit), D2D1::RectF(x + w - 128, y, x + w - 16, y + h), fBody_, theme_.textSecondary);
+    TextRight(valueText, D2D1::RectF(x + w - 128, y, x + w - 16, y + h), fBody_, theme_.textSecondary);
     sliders_[id] = SliderGeom{ trackL, trackR, lo, hi };
     AddHit(r, id);
 }
 
-int App::SliderValueAt(const std::wstring& id, int clickX, int fallback) const {
+double App::SliderValueAt(const std::wstring& id, int clickX, double fallback) const {
     const auto it = sliders_.find(id);
     if (it == sliders_.end() || it->second.trackR <= it->second.trackL) return fallback;
-    const float t = std::clamp((clickX - it->second.trackL) / (it->second.trackR - it->second.trackL), 0.0f, 1.0f);
-    return static_cast<int>(std::lround(it->second.lo + t * (it->second.hi - it->second.lo)));
+    const double t = std::clamp((clickX - it->second.trackL) / (it->second.trackR - it->second.trackL), 0.0f, 1.0f);
+    return it->second.lo + t * (it->second.hi - it->second.lo);
+}
+
+void App::RowCombo(float x, float y, float w, float h, const std::wstring& id, const std::wstring& title,
+                   const std::wstring& subtitle, const std::wstring& value) {
+    D2D1_RECT_F r = D2D1::RectF(x, y, x + w, y + h);
+    if (Hovered(id)) FillRound(r, 4.0f, theme_.controlHover);
+    Text(title, D2D1::RectF(x + 16, y + h / 2 - 19, x + w - 280, y + h / 2 - 1), fBody_, theme_.textPrimary);
+    if (!subtitle.empty())
+        Text(subtitle, D2D1::RectF(x + 16, y + h / 2 + 1, x + w - 280, y + h / 2 + 18), fSmall_, theme_.textSecondary);
+    // 右侧画一个像下拉框的值区：Win11 设置里 ComboBox 就是这个样子
+    D2D1_RECT_F box = D2D1::RectF(x + w - 244, y + h / 2 - 15, x + w - 16, y + h / 2 + 15);
+    FillRound(box, 4.0f, theme_.controlBg);
+    StrokeRound(box, 4.0f, Hovered(id) ? theme_.accent : theme_.controlBorder);
+    Text(value, D2D1::RectF(box.left + 10, box.top, box.right - 26, box.bottom), fBody_, theme_.textPrimary);
+    Glyph(L"\xE70D", D2D1::RectF(box.right - 24, box.top, box.right - 6, box.bottom), 10.0f, theme_.textSecondary);
+    AddHit(r, id);
+}
+
+void App::RowStatus(float x, float y, float w, float h, const std::wstring& id, const std::wstring& title,
+                    const std::wstring& subtitle, const std::wstring& value) {
+    D2D1_RECT_F r = D2D1::RectF(x, y, x + w, y + h);
+    if (Hovered(id)) FillRound(r, 4.0f, theme_.controlHover);
+    Text(title, D2D1::RectF(x + 16, y + h / 2 - 19, x + w - 340, y + h / 2 - 1), fBody_, theme_.textPrimary);
+    if (!subtitle.empty())
+        Text(subtitle, D2D1::RectF(x + 16, y + h / 2 + 1, x + w - 340, y + h / 2 + 18), fSmall_, theme_.textSecondary);
+    TextRight(value, D2D1::RectF(x + w - 320, y, x + w - 140, y + h), fBody_, theme_.textSecondary);
+    D2D1_RECT_F button = D2D1::RectF(x + w - 132, y + h / 2 - 15, x + w - 16, y + h / 2 + 15);
+    FillRound(button, 4.0f, theme_.controlBg);
+    StrokeRound(button, 4.0f, theme_.controlBorder);
+    TextCentered(fc::T(L"重新连接"), button, fSmall_, theme_.textPrimary);
+    AddHit(button, L"act:reconnect");
 }
 
 float App::Card(float x, float y, float w, const std::wstring& title, float height) {
@@ -381,25 +414,37 @@ void App::DrawSidebar(float w, float h) {
 }
 
 void App::DrawDashboard(float x, float y, float w) {
-    float cardW = (w - 16.0f) / 3.0f;
-    struct Stat { const wchar_t* label; std::wstring value; const wchar_t* unit; const wchar_t* sub; };
-    Stat stats[3] = {
-        { fc::T(L"CPU 温度"), snap_.cpu > 0.0 ? Fmt(L"%.1f", snap_.cpu) : L"—", L"°C", fc::T(L"LHM 封装传感器") },
-        { fc::T(L"GPU 温度"), snap_.gpu > 0.0 ? Fmt(L"%.1f", snap_.gpu) : L"—", L"°C", fc::T(L"未启用时回退 CPU") },
-        { fc::T(L"风扇 PWM"), Fmt(L"%d", snap_.pwm), L"%", fc::T(L"转速见趋势") },
+    // 与 1.3.0 一致：六块指标卡（CPU / GPU / PWM / 转速 / 控制模式 / 连接状态）+ 一条趋势图。
+    const float gap = 8.0f;
+    const float cardW = (w - gap * 2.0f) / 3.0f;
+    const float cardH = 104.0f;
+    struct Tile { const wchar_t* label; std::wstring value; const wchar_t* unit; };
+    Tile tiles[6] = {
+        { fc::T(L"CPU 温度"), snap_.cpu > 0.0 ? Fmt(L"%.1f", snap_.cpu) : L"—", L"°C" },
+        { fc::T(L"GPU 温度"), snap_.gpu > 0.0 ? Fmt(L"%.1f", snap_.gpu) : L"—", L"°C" },
+        { fc::T(L"风扇 PWM"), Fmt(L"%d", snap_.pwm), L"%" },
+        { fc::T(L"风扇转速"), snap_.rpm > 0 ? Fmt(L"%d", snap_.rpm) : L"—", L"RPM" },
+        { fc::T(L"控制模式"), ModeLabel(config_.fanControlMode), L"" },
+        { fc::T(L"连接状态"), snap_.deviceConnected ? fc::T(L"已连接") : fc::T(L"未连接"), L"" },
     };
-    for (int i = 0; i < 3; ++i) {
-        float cx = x + i * (cardW + 8.0f);
-        D2D1_RECT_F r = D2D1::RectF(cx, y, cx + cardW, y + 118);
+    for (int i = 0; i < 6; ++i) {
+        const int row = i / 3;
+        const int col = i % 3;
+        float cx = x + col * (cardW + gap);
+        float cy = y + row * (cardH + gap);
+        D2D1_RECT_F r = D2D1::RectF(cx, cy, cx + cardW, cy + cardH);
         FillRound(r, 8.0f, theme_.cardBg);
         StrokeRound(r, 8.0f, theme_.cardBorder);
-        Text(stats[i].label, D2D1::RectF(cx + 16, y + 14, cx + cardW - 16, y + 34), fSmall_, theme_.textSecondary);
-        Text(stats[i].value, D2D1::RectF(cx + 16, y + 36, cx + cardW - 44, y + 78), fBig_, theme_.textPrimary);
-        TextRight(stats[i].unit, D2D1::RectF(cx + cardW - 42, y + 36, cx + cardW - 14, y + 78), fBody_,
-                  theme_.textSecondary);
-        Text(stats[i].sub, D2D1::RectF(cx + 16, y + 88, cx + cardW - 16, y + 108), fSmall_, theme_.textTertiary);
+        Text(tiles[i].label, D2D1::RectF(cx + 16, cy + 14, cx + cardW - 16, cy + 34), fSmall_, theme_.textSecondary);
+        const bool wide = i >= 4;  // 控制模式/连接状态是文字，用小一号字体避免裁切
+        Text(tiles[i].value, D2D1::RectF(cx + 16, cy + 40, cx + cardW - (wide ? 16.0f : 44.0f), cy + 82),
+             wide ? fH2_ : fBig_, theme_.textPrimary);
+        if (tiles[i].unit[0] != L'\0') {
+            TextRight(tiles[i].unit, D2D1::RectF(cx + cardW - 42, cy + 40, cx + cardW - 14, cy + 82), fBody_,
+                      theme_.textSecondary);
+        }
     }
-    y += 134.0f;
+    y += cardH * 2 + gap + 18.0f;
 
     // 趋势卡
     float h = 250.0f;
@@ -440,34 +485,21 @@ void App::DrawDashboard(float x, float y, float w) {
 
     TextCentered(L"100", D2D1::RectF(x + 8, plot.top - 8, x + 40, plot.top + 8), fSmall_, theme_.textTertiary);
     TextCentered(L"0", D2D1::RectF(x + 8, plot.bottom - 8, x + 40, plot.bottom + 8), fSmall_, theme_.textTertiary);
-    y += h + 16.0f;
+    y += h + 14.0f;
 
-    // 状态卡
-    float sh = 140.0f;
-    D2D1_RECT_F st = D2D1::RectF(x, y, x + w, y + sh);
-    FillRound(st, 8.0f, theme_.cardBg);
-    StrokeRound(st, 8.0f, theme_.cardBorder);
-    Text(fc::T(L"连接状态"), D2D1::RectF(x + 16, y + 12, x + w - 16, y + 34), fBodyStrong_, theme_.textPrimary);
-    // 采样错误优先；没有采样错误时显示通信链路的最近失败（两者都归零才算“无”）
-    std::wstring recentError = fc::T(L"无");
+    // 最近错误：与 1.3.0 一样只在真的出错时出现一行，不再单独占一张卡
+    std::wstring recentError;
     if (!snap_.lastError.empty()) {
         recentError = fc::ErrorText(snap_.errorCode, snap_.errorArg1, snap_.errorArg2, snap_.lastError);
     } else if (!snap_.commError.empty()) {
         recentError = fc::ErrorText(snap_.commErrorCode, snap_.commErrorArg1, snap_.commErrorArg2, snap_.commError);
     }
-    struct KV { const wchar_t* k; std::wstring v; };
-    KV rows[3] = {
-        { fc::T(L"通信"), snap_.commMode },
-        { fc::T(L"设备"), snap_.deviceConnected ? fc::T(L"已连接") : fc::T(L"未连接") },
-        { fc::T(L"最近错误"), recentError },
-    };
-    float ry = y + 44;
-    for (auto& kv : rows) {
-        Text(kv.k, D2D1::RectF(x + 16, ry, x + 160, ry + 24), fSmall_, theme_.textSecondary);
-        Text(kv.v, D2D1::RectF(x + 160, ry, x + w - 16, ry + 24), fBody_, theme_.textPrimary);
-        ry += 28;
+    if (!recentError.empty()) {
+        Text(std::wstring(fc::T(L"最近错误")) + L" · " + snap_.commMode + L" · " + recentError,
+             D2D1::RectF(x + 4, y, x + w - 4, y + 22), fSmall_, theme_.danger);
+        y += 26.0f;
     }
-    contentHeight_ = y + sh + 24.0f;
+    contentHeight_ = y + 16.0f;
 }
 
 namespace {
@@ -495,96 +527,111 @@ void App::DrawSettings(float x, float y, float w) {
         return y + 4;
     };
 
-    // 通用
-    groupTitle(fc::T(L"通用"));
-    {
-        const int rows = 4;
-        float ry = cardTop(rows);
-        RowButton(x, ry, w, rowH, L"set:theme", fc::T(L"应用主题"), fc::T(L"跟随系统 / 深色 / 浅色"), ThemeLabel());
-        ry += rowH;
-        RowButton(x, ry, w, rowH, L"set:lang", fc::T(L"语言"), fc::T(L"界面语言"), LangLabel());
-        ry += rowH;
-        RowButton(x, ry, w, rowH, L"set:unit", fc::T(L"温度单位"), fc::T(L"仪表盘与曲线显示单位"), UnitLabel());
-        ry += rowH;
-        RowToggle(x, ry, w, rowH, L"set:autostart", fc::T(L"开机自启"), fc::T(L"登录后自动启动后台守护进程"), autostart_);
-        y += rows * rowH + 8 + 20;
-    }
-
-    // 硬件来源
-    groupTitle(fc::T(L"硬件"));
-    {
-        const int rows = 4;
-        float ry = cardTop(rows);
-        RowButton(x, ry, w, rowH, L"set:tempsrc", fc::T(L"温度来源"), L"LibreHardwareMonitor / ATK ACPI / WMI",
-                  SourceLabel(config_.temperatureSource));
-        ry += rowH;
-        RowButton(x, ry, w, rowH, L"set:fansrc", fc::T(L"转速来源"),
-                  std::wstring(fc::T(L"EC 直读")) + L" / LibreHardwareMonitor / AIDA64",
-                  SourceLabel(config_.fanSpeedSource));
-        ry += rowH;
-        RowToggle(x, ry, w, rowH, L"set:gpusrc", fc::T(L"GPU 温度源"), L"NVIDIA nvidia-smi / AMD ADL",
-                  !config_.gpuTemperatureSource.empty());
-        ry += rowH;
-        RowButton(x, ry, w, rowH, L"set:gpusel", fc::T(L"GPU 选择"), fc::T(L"多显卡时指定读取哪一块"),
-                  config_.gpuSelection == L"Auto" ? std::wstring(fc::T(L"自动")) : config_.gpuSelection);
-        y += rows * rowH + 8 + 20;
-    }
-
-    // 控制
-    groupTitle(fc::T(L"控制"));
+    // 温度与风扇（对应 1.3.0 第一张卡）
+    groupTitle(fc::T(L"温度与风扇"));
     {
         const bool manual = config_.fanControlMode == L"Manual";
-        const int rows = manual ? 6 : 5;
+        const int rows = 5 + (manual ? 1 : 0) + 1 + (config_.smoothingEnabled ? 1 : 0);
         float ry = cardTop(rows);
-        RowButton(x, ry, w, rowH, L"set:mode", fc::T(L"控制模式"), fc::T(L"温度曲线 / 手动 PWM / 目标转速"),
-                  ModeLabel(config_.fanControlMode));
+        RowCombo(x, ry, w, rowH, L"set:tempsrc", fc::T(L"温度来源"), fc::T(L"CPU 温度的读取方式"),
+                 SourceLabel(config_.temperatureSource));
+        ry += rowH;
+        RowCombo(x, ry, w, rowH, L"set:gpusrc", fc::T(L"GPU 温度源"), fc::T(L"显卡温度的读取方式"),
+                 GpuSourceLabel());
+        ry += rowH;
+        RowCombo(x, ry, w, rowH, L"set:gpusel", fc::T(L"GPU 选择"), fc::T(L"多显卡时指定读取哪一块"),
+                 config_.gpuSelection == L"Auto" ? std::wstring(fc::T(L"自动")) : config_.gpuSelection);
+        ry += rowH;
+        RowCombo(x, ry, w, rowH, L"set:fansrc", fc::T(L"转速来源"), fc::T(L"风扇转速的读取方式"),
+                 SourceLabel(config_.fanSpeedSource));
+        ry += rowH;
+        RowCombo(x, ry, w, rowH, L"set:mode", fc::T(L"控制模式"), fc::T(L"决定 PWM 由谁计算"),
+                 ModeLabel(config_.fanControlMode));
         ry += rowH;
         if (manual) {
             RowSlider(x, ry, w, rowH, L"set:manualpwm", fc::T(L"手动 PWM"), fc::T(L"手动模式下直接指定占空比"),
-                      static_cast<int>(std::lround(config_.manualPwmPercent)), 0, 100, L"%");
+                      config_.manualPwmPercent, 0, 100,
+                      Fmt(L"%d %%", static_cast<int>(std::lround(config_.manualPwmPercent))));
             ry += rowH;
         }
-        RowSlider(x, ry, w, rowH, L"set:smooth", fc::T(L"平滑窗口"), fc::T(L"PWM 变化的过渡时间"), smoothMs_, 100, 3000);
+        RowToggle(x, ry, w, rowH, L"set:smoothenable", fc::T(L"平滑输出"), fc::T(L"让 PWM 变化有过渡"),
+                  config_.smoothingEnabled);
         ry += rowH;
-        RowToggle(x, ry, w, rowH, L"set:notify", fc::T(L"断连通知"), fc::T(L"蓝牙断开时弹出系统通知"), config_.notifyOnBleDisconnect);
+        if (config_.smoothingEnabled) {
+            RowSlider(x, ry, w, rowH, L"set:smooth", fc::T(L"平滑窗口"), fc::T(L"PWM 变化的过渡时间"),
+                      config_.pwmSmoothingWindowSeconds, 0.5, 30.0,
+                      Fmt(L"%.1f s", config_.pwmSmoothingWindowSeconds));
+            ry += rowH;
+        }
+        y += rows * rowH + 8 + 20;
+    }
+
+    // 通信（对应 1.3.0 第二张卡）
+    groupTitle(fc::T(L"通信"));
+    {
+        const int rows = 8;
+        float ry = cardTop(rows);
+        RowCombo(x, ry, w, rowH, L"set:comm", fc::T(L"通信方式"), fc::T(L"蓝牙 BLE 或串口"),
+                 config_.communicationType == L"Com" ? fc::T(L"串口") : fc::T(L"蓝牙 BLE"));
+        ry += rowH;
+        RowCombo(x, ry, w, rowH, L"set:comport", fc::T(L"串口端口"), fc::T(L"与风扇相连的 COM 口"), config_.comPort);
+        ry += rowH;
+        RowCombo(x, ry, w, rowH, L"set:baud", fc::T(L"波特率"), fc::T(L"串口通信速率"),
+                 std::to_wstring(config_.comBaudRate));
+        ry += rowH;
+        RowCombo(x, ry, w, rowH, L"set:bledev", fc::T(L"蓝牙设备"), fc::T(L"已配对的 NUS 风扇"), DeviceLabel());
+        ry += rowH;
+        RowSlider(x, ry, w, rowH, L"set:blepoll", fc::T(L"BLE 轮询"), fc::T(L"发送温度命令的间隔"),
+                  config_.blePollIntervalSeconds, 1, 30, Fmt(L"%d s", config_.blePollIntervalSeconds));
+        ry += rowH;
+        RowSlider(x, ry, w, rowH, L"set:reconnect", fc::T(L"重连间隔"), fc::T(L"断开后每隔多少秒重试一次"),
+                  config_.bleReconnectIntervalSeconds, 1, 60,
+                  Fmt(L"%d s", config_.bleReconnectIntervalSeconds));
+        ry += rowH;
+        RowToggle(x, ry, w, rowH, L"set:autoreconnect", fc::T(L"自动重连"), fc::T(L"断开后自动尝试恢复"),
+                  config_.autoReconnectBle);
+        ry += rowH;
+        RowStatus(x, ry, w, rowH, L"set:connstate", fc::T(L"连接状态"), fc::T(L"设备链路"), ConnectionLabel());
+        y += rows * rowH + 8 + 20;
+    }
+
+    // 系统（对应 1.3.0 第三张卡）
+    groupTitle(fc::T(L"系统"));
+    {
+        const int rows = 9;
+        float ry = cardTop(rows);
+        RowSlider(x, ry, w, rowH, L"set:poll", fc::T(L"采样间隔"), fc::T(L"读取传感器的周期"),
+                  config_.pollIntervalMilliseconds / 1000.0, 0.1, 5.0,
+                  Fmt(L"%.1f s", config_.pollIntervalMilliseconds / 1000.0));
+        ry += rowH;
+        RowToggle(x, ry, w, rowH, L"set:autostart", fc::T(L"开机自启"), fc::T(L"登录后自动启动后台守护进程"), autostart_);
+        ry += rowH;
+        RowCombo(x, ry, w, rowH, L"set:datadir", fc::T(L"数据目录"), fc::T(L"配置与日志的存放位置（重启后生效）"),
+                 DataDirLabel());
+        ry += rowH;
+        RowToggle(x, ry, w, rowH, L"set:logenabled", fc::T(L"日志记录"), fc::T(L"把运行日志写入数据目录"), logEnabled_);
+        ry += rowH;
+        RowCombo(x, ry, w, rowH, L"set:theme", fc::T(L"应用主题"), fc::T(L"跟随系统 / 深色 / 浅色"), ThemeLabel());
+        ry += rowH;
+        RowCombo(x, ry, w, rowH, L"set:lang", fc::T(L"语言"), fc::T(L"界面语言"), LangLabel());
+        ry += rowH;
+        RowCombo(x, ry, w, rowH, L"set:unit", fc::T(L"温度单位"), fc::T(L"仪表盘与曲线显示单位"), UnitLabel());
+        ry += rowH;
+        RowToggle(x, ry, w, rowH, L"set:notify", fc::T(L"断连通知"), fc::T(L"蓝牙断开时弹出系统通知"),
+                  config_.notifyOnBleDisconnect);
         ry += rowH;
         RowToggle(x, ry, w, rowH, L"set:notifytemp", fc::T(L"温度异常通知"), fc::T(L"温度数据源读取失败时提示"),
                   config_.notifyOnTemperatureError);
-        ry += rowH;
-        RowToggle(x, ry, w, rowH, L"set:autoreconnect", fc::T(L"自动重连"), fc::T(L"断开后按间隔自动重试"),
-                  config_.autoReconnectBle);
         y += rows * rowH + 8 + 20;
     }
 
-    // 通信
-    groupTitle(fc::T(L"通信"));
-    {
-        const int rows = 6;
-        float ry = cardTop(rows);
-        RowButton(x, ry, w, rowH, L"set:comm", fc::T(L"通信方式"), fc::T(L"蓝牙 BLE 或串口"),
-                  config_.communicationType == L"Com" ? fc::T(L"串口") : fc::T(L"蓝牙 BLE"));
-        ry += rowH;
-        RowButton(x, ry, w, rowH, L"set:bledev", fc::T(L"蓝牙设备"), fc::T(L"选择已配对的 NUS 风扇"),
-                  DeviceLabel());
-        ry += rowH;
-        RowButton(x, ry, w, rowH, L"set:comport", fc::T(L"串口端口"), fc::T(L"选择与风扇相连的 COM 口"), config_.comPort);
-        ry += rowH;
-        RowButton(x, ry, w, rowH, L"set:baud", fc::T(L"波特率"), fc::T(L"串口通信速率"),
-                  std::to_wstring(config_.comBaudRate));
-        ry += rowH;
-        RowButton(x, ry, w, rowH, L"set:reconnect", fc::T(L"重连间隔"), fc::T(L"断开后每隔多少秒重试一次"),
-                   std::to_wstring(config_.bleReconnectIntervalSeconds) + L" s");
-        y += rows * rowH + 8 + 20;
-    }
+    // 重新加载：把界面上的值从后台再取一遍（1.3.0 的「重新加载」按钮）
+    Chip(x, y, 120, 34, fc::T(L"重新加载"), false, L"settings:reload");
+    y += 34 + 18;
 
-    // 维护
-    groupTitle(fc::T(L"维护"));
-    {
-        const int rows = 1;
-        float ry = cardTop(rows);
-        RowButton(x, ry, w, rowH, L"set:logs", fc::T(L"日志目录"), fc::T(L"打开日志所在文件夹"), L"");
-        y += rows * rowH + 8 + 16;
-    }
+
+
+
 
     contentHeight_ = y - top + 24.0f;
 }
@@ -628,14 +675,18 @@ void App::DrawCurve(float x, float y, float w) {
     }
     for (size_t i = 0; i < points.size(); ++i) {
         float px = toX(points[i].t), py = toY(points[i].p);
-        FillRound(D2D1::RectF(px - 6, py - 6, px + 6, py + 6), 6.0f, theme_.cardBg);
+        const bool selected = static_cast<int>(i) == curveSelected_;
+        FillRound(D2D1::RectF(px - 6, py - 6, px + 6, py + 6), 6.0f, selected ? theme_.accent : theme_.cardBg);
         StrokeRound(D2D1::RectF(px - 6, py - 6, px + 6, py + 6), 6.0f, theme_.accent, 2.0f);
     }
 
+    // 1.3.0 曲线页的四个按钮：添加点 / 删除点 / 重置 / 保存
     float by = y + h + 16;
-    Chip(x, by, 96, 32, fc::T(L"重置曲线"), false, L"reset");
-    Chip(x + 104, by, 96, 32, fc::T(L"应用"), true, L"apply");
-    Text(fc::T(L"拖动圆点调整映射，双击空白处新增点"), D2D1::RectF(x + 216, by, x + w, by + 32), fSmall_,
+    Chip(x, by, 88, 32, fc::T(L"添加点"), false, L"curve:add");
+    Chip(x + 96, by, 88, 32, fc::T(L"删除点"), false, L"curve:del");
+    Chip(x + 192, by, 88, 32, fc::T(L"重置"), false, L"reset");
+    Chip(x + 288, by, 88, 32, fc::T(L"保存"), true, L"apply");
+    Text(fc::T(L"拖动圆点调整映射，点击空白处新增点"), D2D1::RectF(x + 392, by, x + w, by + 32), fSmall_,
          theme_.textTertiary);
     contentHeight_ = by + 32 + 24 - y;
 }
@@ -662,111 +713,181 @@ void App::DrawAbout(float x, float y, float w) {
     contentHeight_ = y + 32 + 24 - y;
 }
 
-// ---------------- 选择弹窗 ----------------
+// ---------------- 行内下拉（ComboBox） ----------------
 
-void App::OpenDialog(Dialog kind) {
-    dialog_ = kind;
-    dialogItems_.clear();
-    dialogScroll_ = 0;
-    dialogBusy_ = true;
-    dialogTitle_ = kind == Dialog::BleDevices ? fc::T(L"选择蓝牙设备")
-                  : kind == Dialog::Ports     ? fc::T(L"选择串口")
-                                              : fc::T(L"选择 GPU");
-    {
+namespace {
+const wchar_t* TN(const wchar_t* zh) { return fc::T(zh); }
+}  // namespace
+
+void App::FillComboItems(const std::wstring& id) {
+    auto add = [this](const std::wstring& label, const std::wstring& value) {
+        comboItems_.push_back(ComboItem{ label, value });
+    };
+    if (id == L"set:theme") {
+        add(TN(L"跟随系统"), L"System");
+        add(TN(L"深色"), L"Dark");
+        add(TN(L"浅色"), L"Light");
+    } else if (id == L"set:lang") {
+        add(L"简体中文", L"zh-CN");
+        add(L"English", L"en-US");
+    } else if (id == L"set:unit") {
+        add(TN(L"摄氏度 °C"), L"Celsius");
+        add(TN(L"华氏度 °F"), L"Fahrenheit");
+    } else if (id == L"set:tempsrc") {
+        add(L"ATK ACPI", L"AtkAcpi");
+        add(L"WMI", L"Wmi");
+        add(L"LibreHardwareMonitor", L"LibreHardwareMonitor");
+        add(L"AIDA64", L"Aida64");
+    } else if (id == L"set:gpusrc") {
+        add(L"NVIDIA nvidia-smi", L"NvidiaSmiAdl");
+        add(L"LibreHardwareMonitor", L"LibreHardwareMonitor");
+        add(L"ATK ACPI", L"AtkAcpi");
+        add(L"AIDA64", L"Aida64");
+    } else if (id == L"set:fansrc") {
+        add(L"ATK ACPI", L"AtkAcpi");
+        add(L"WMI", L"Wmi");
+        add(L"LibreHardwareMonitor", L"LibreHardwareMonitor");
+        add(L"AIDA64", L"Aida64");
+    } else if (id == L"set:mode") {
+        add(TN(L"手动 PWM"), L"Manual");
+        add(TN(L"CPU 温度"), L"CpuTemp");
+        add(TN(L"GPU 温度"), L"GpuTemp");
+        add(TN(L"混合（取平均）"), L"MixedAvg");
+        add(TN(L"混合（取高）"), L"Mixed");
+        add(TN(L"目标转速"), L"TargetRpm");
+    } else if (id == L"set:comm") {
+        add(TN(L"蓝牙 BLE"), L"Ble");
+        add(TN(L"串口"), L"Com");
+    } else if (id == L"set:baud") {
+        for (int rate : { 9600, 19200, 38400, 57600, 115200, 230400 }) add(std::to_wstring(rate), std::to_wstring(rate));
+    } else if (id == L"set:datadir") {
+        add(TN(L"应用数据目录"), L"AppData");
+        add(TN(L"安装目录"), L"ExeDirectory");
+    } else if (id == L"set:gpusel") {
+        add(TN(L"自动"), L"Auto");
+        comboBusy_ = true;
         std::lock_guard<std::mutex> lock(sendMutex_);
-        if (ipc_ && ipc_->IsOpen()) {
-            if (kind == Dialog::BleDevices) ipc_->ScanBleDevices();
-            else if (kind == Dialog::Ports) ipc_->ListPorts();
-            else ipc_->ListGpus();
-        } else {
-            dialogBusy_ = false;
-        }
+        if (ipc_ && ipc_->IsOpen()) ipc_->ListGpus();
+    } else if (id == L"set:comport") {
+        comboBusy_ = true;
+        std::lock_guard<std::mutex> lock(sendMutex_);
+        if (ipc_ && ipc_->IsOpen()) ipc_->ListPorts();
+    } else if (id == L"set:bledev") {
+        comboBusy_ = true;
+        std::lock_guard<std::mutex> lock(sendMutex_);
+        if (ipc_ && ipc_->IsOpen()) ipc_->ScanBleDevices();
     }
+}
+
+void App::OpenCombo(const std::wstring& id) {
+    comboOpen_ = id;
+    comboScroll_ = 0;
+    comboItems_.clear();
+    comboBusy_ = false;
+    FillComboItems(id);
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
-void App::CloseDialog() {
-    dialog_ = Dialog::None;
-    dialogItems_.clear();
-    dialogBusy_ = false;
+void App::CloseCombo() {
+    if (comboOpen_.empty()) return;
+    comboOpen_.clear();
+    comboItems_.clear();
+    comboBusy_ = false;
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
-void App::SelectDialogItem(int index) {
-    if (index < 0 || index >= static_cast<int>(dialogItems_.size())) return;
-    const std::wstring label = dialogItems_[index].first;
-    const std::wstring value = dialogItems_[index].second;
-    if (dialog_ == Dialog::BleDevices) {
-        config_.bleDeviceMac = value;
-        config_.bleDeviceName = (label == value) ? L"" : label;
-        SendString("bleDeviceMac", value);
-        SendString("bleDeviceName", config_.bleDeviceName);
-    } else if (dialog_ == Dialog::Ports) {
-        config_.comPort = value;
-        SendString("comPort", value);
-    } else if (dialog_ == Dialog::Gpus) {
+void App::ChooseComboItem(int index) {
+    if (index < 0 || index >= static_cast<int>(comboItems_.size())) return;
+    const std::wstring id = comboOpen_;
+    const std::wstring value = comboItems_[index].value;
+    CloseCombo();
+    if (id == L"set:theme") {
+        config_.theme = value;
+        SendString("theme", value);
+        if (!hasInitial_) {
+            dark_ = value == L"Dark" ? true : value == L"Light" ? false : !SystemUsesLightTheme();
+            theme_ = MakeTheme(dark_);
+            BOOL useDark = dark_ ? TRUE : FALSE;
+            DwmSetWindowAttribute(hwnd_, 20, &useDark, sizeof(useDark));
+        }
+    } else if (id == L"set:lang") {
+        config_.language = value;
+        fc::SetLang(value.rfind(L"en", 0) == 0 ? fc::Lang::En : fc::Lang::Zh);
+        SendString("language", value);
+    } else if (id == L"set:unit") {
+        config_.temperatureUnit = value;
+        SendString("temperatureUnit", value);
+    } else if (id == L"set:tempsrc") {
+        config_.temperatureSource = value;
+        SendString("temperatureSource", value);
+    } else if (id == L"set:gpusrc") {
+        config_.gpuTemperatureSource = value;
+        SendString("gpuTemperatureSource", value);
+    } else if (id == L"set:fansrc") {
+        config_.fanSpeedSource = value;
+        SendString("fanSpeedSource", value);
+    } else if (id == L"set:mode") {
+        config_.fanControlMode = value;
+        SendString("fanControlMode", value);
+    } else if (id == L"set:comm") {
+        config_.communicationType = value;
+        SendString("communicationType", value);
+    } else if (id == L"set:baud") {
+        config_.comBaudRate = _wtoi(value.c_str());
+        SendValue("comBaudRate", fc::WideToUtf8(value).c_str());
+    } else if (id == L"set:datadir") {
+        userDataLocation_ = value;
+        SendSystem("userDataLocation", std::string("\"") + fc::WideToUtf8(value) + "\"");
+    } else if (id == L"set:gpusel") {
         config_.gpuSelection = value;
         SendString("gpuSelection", value);
+    } else if (id == L"set:comport") {
+        config_.comPort = value;
+        SendString("comPort", value);
+    } else if (id == L"set:bledev") {
+        // value 是 MAC，label 是设备名（后台给同名项时 label == value）
+        config_.bleDeviceMac = value;
+        config_.bleDeviceName = comboItems_.size() > static_cast<size_t>(index) ? comboItems_[index].label : std::wstring();
+        if (config_.bleDeviceName == value) config_.bleDeviceName.clear();
+        SendString("bleDeviceMac", value);
+        SendString("bleDeviceName", config_.bleDeviceName);
     }
-    CloseDialog();
+    InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
-void App::DrawDialog(float w, float h) {
-    if (dialog_ == Dialog::None) return;
-
-    FillRect(D2D1::RectF(0, 0, w, h), Col(0x000000, 0.35f));
-
-    const float dlgW = std::min(560.0f, w - 80.0f);
-    const float dlgH = std::min(440.0f, h - 120.0f);
-    D2D1_RECT_F box = D2D1::RectF((w - dlgW) / 2, (h - dlgH) / 2, (w + dlgW) / 2, (h + dlgH) / 2);
-    FillRound(box, 10.0f, theme_.cardBg);
-    StrokeRound(box, 10.0f, theme_.cardBorder);
-
-    Text(dialogTitle_, D2D1::RectF(box.left + 24, box.top + 16, box.right - 160, box.top + 46), fH2_, theme_.textPrimary);
-    const std::wstring dialogHint =
-        dialogBusy_ ? std::wstring(fc::T(L"扫描中…")) : Fmt(fc::T(L"共 %d 项"), static_cast<int>(dialogItems_.size()));
-    Text(dialogHint,
-         D2D1::RectF(box.left + 24, box.top + 44, box.right - 160, box.top + 62), fSmall_, theme_.textSecondary);
-
-    D2D1_RECT_F close = D2D1::RectF(box.right - 44, box.top + 16, box.right - 16, box.top + 44);
-    if (Hovered(L"dlg:close")) FillRound(close, 4.0f, theme_.controlHover);
-    Glyph(L"\xE711", close, 12.0f, theme_.textSecondary);
-    AddHit(close, L"dlg:close");
-
-    if (dialog_ == Dialog::BleDevices) {
-        D2D1_RECT_F refresh = D2D1::RectF(box.right - 140, box.top + 16, box.right - 56, box.top + 44);
-        if (Hovered(L"dlg:refresh")) FillRound(refresh, 4.0f, theme_.controlHover);
-        TextCentered(fc::T(L"重新扫描"), refresh, fSmall_, theme_.textSecondary);
-        AddHit(refresh, L"dlg:refresh");
-    }
-
-    const float rowH = 54.0f;
-    const float listTop = box.top + 70.0f;
-    const float listBottom = box.bottom - 14.0f;
-    int maxRows = static_cast<int>((listBottom - listTop) / rowH);
-    if (maxRows < 1) maxRows = 1;
-    const int total = static_cast<int>(dialogItems_.size());
-    if (dialogScroll_ > total - maxRows) dialogScroll_ = total - maxRows;
-    if (dialogScroll_ < 0) dialogScroll_ = 0;
-
-    for (int i = 0; i < maxRows; ++i) {
-        const int index = dialogScroll_ + i;
-        if (index >= total) break;
-        D2D1_RECT_F row = D2D1::RectF(box.left + 12, listTop + i * rowH, box.right - 12, listTop + (i + 1) * rowH);
-        const std::wstring id = L"dlg:" + std::to_wstring(index);
-        if (Hovered(id)) FillRound(row, 4.0f, theme_.controlHover);
-        Text(dialogItems_[index].first, D2D1::RectF(row.left + 12, row.top + 6, row.right - 12, row.top + 28), fBody_,
-             theme_.textPrimary);
-        if (dialogItems_[index].second != dialogItems_[index].first) {
-            Text(dialogItems_[index].second, D2D1::RectF(row.left + 12, row.top + 26, row.right - 12, row.top + 48),
-                 fSmall_, theme_.textSecondary);
-        }
-        AddHit(row, id);
-    }
-
-    if (!dialogBusy_ && total == 0) {
-        TextCentered(fc::T(L"没有可选项"), D2D1::RectF(box.left, listTop + 40, box.right, listTop + 72), fBody_,
+void App::DrawCombo(float w, float h) {
+    if (comboOpen_.empty()) return;
+    const float listW = 280.0f;
+    const float rowH = 36.0f;
+    const int count = static_cast<int>(comboItems_.size());
+    const int shown = std::min(std::max(count, comboBusy_ ? 1 : 0), 8);
+    const float listH = shown * rowH + 12.0f;
+    float left = std::clamp(comboAnchor_.right - listW, 12.0f, w - listW - 12.0f);
+    float top = comboAnchor_.bottom + 4.0f;
+    if (top + listH > h - 12.0f) top = comboAnchor_.top - listH - 4.0f;
+    D2D1_RECT_F box = D2D1::RectF(left, top, left + listW, top + listH);
+    FillRound(box, 6.0f, theme_.cardBg);
+    StrokeRound(box, 6.0f, theme_.controlBorder);
+    if (comboBusy_ && count == 0) {
+        TextCentered(fc::T(L"扫描中…"), D2D1::RectF(box.left, box.top + 6, box.right, box.top + 6 + rowH), fBody_,
                      theme_.textSecondary);
+    } else if (count == 0) {
+        TextCentered(fc::T(L"没有可选项"), D2D1::RectF(box.left, box.top + 6, box.right, box.top + 6 + rowH), fBody_,
+                     theme_.textSecondary);
+    }
+    const std::wstring current = CurrentComboLabel(comboOpen_);
+    const int first = std::clamp(comboScroll_, 0, std::max(0, count - 8));
+    for (int i = 0; i < shown && first + i < count; ++i) {
+        const int index = first + i;
+        D2D1_RECT_F row = D2D1::RectF(box.left + 6, box.top + 6 + i * rowH, box.right - 6, box.top + 6 + (i + 1) * rowH);
+        const std::wstring id = L"combo:" + std::to_wstring(index);
+        const bool selected = !current.empty() && comboItems_[index].label == current;
+        if (Hovered(id)) FillRound(row, 4.0f, theme_.controlHover);
+        Text(comboItems_[index].label, D2D1::RectF(row.left + 10, row.top, row.right - 36, row.bottom), fBody_,
+             selected ? theme_.accent : theme_.textPrimary);
+        if (selected)
+            Glyph(L"\xE73E", D2D1::RectF(row.right - 30, row.top, row.right - 8, row.bottom), 12.0f, theme_.accent);
+        AddHit(row, id);
     }
 }
 
@@ -807,8 +928,8 @@ void App::Paint() {
     pageHeight_[static_cast<int>(page_)] = contentHeight_;
     contentHeight_ = pageHeight_[static_cast<int>(page_)];
 
-    // 后台未连接时的提示放在侧栏底部，避免遮挡内容
-    DrawDialog(size.width, size.height);
+    // 下拉浮层画在内容之上（不裁剪），点击外部由 OnLButtonDown 关掉
+    DrawCombo(size.width, size.height);
 
     if (!toast_.empty() && GetTickCount() < toastUntil_) {
         float tw = 240.0f;
@@ -887,19 +1008,19 @@ void App::OnMouseLeave() {
 void App::OnLButtonDown(int x, int y) {
     float sx = x / scale_, sy = y / scale_;
 
-    // 弹窗打开时吞掉所有点击，只响应弹窗自己的热区
-    if (dialog_ != Dialog::None) {
-        for (auto& h : hits_) {
-            if (sx < h.rect.left || sx > h.rect.right || sy < h.rect.top || sy > h.rect.bottom) continue;
-            if (h.id == L"dlg:close") {
-                CloseDialog();
-            } else if (h.id == L"dlg:refresh") {
-                OpenDialog(dialog_);
-            } else if (h.id.rfind(L"dlg:", 0) == 0) {
-                SelectDialogItem(_wtoi(h.id.c_str() + 4));
+    // 下拉打开时：点条目就选中，点别处就收起（和系统 ComboBox 一样）
+    if (!comboOpen_.empty()) {
+        // 浮层画在最上层，命中也要从后往前：底下的行先入表，否则点到浮层会先命中被遮住的行。
+        for (auto it = hits_.rbegin(); it != hits_.rend(); ++it) {
+            const D2D1_RECT_F& r = it->rect;
+            if (sx < r.left || sx > r.right || sy < r.top || sy > r.bottom) continue;
+            if (it->id.rfind(L"combo:", 0) == 0) {
+                ChooseComboItem(_wtoi(it->id.c_str() + 6));
+                return;
             }
-            return;
+            break;
         }
+        CloseCombo();
         return;
     }
 
@@ -911,8 +1032,15 @@ void App::OnLButtonDown(int x, int y) {
             float py = curvePlot_.bottom - static_cast<float>(points[i].p / 100.0) * (curvePlot_.bottom - curvePlot_.top);
             if (std::abs(sx - px) < 12 && std::abs(sy - py) < 12) {
                 dragIndex_ = static_cast<int>(i);
+                curveSelected_ = static_cast<int>(i);
+                InvalidateRect(hwnd_, nullptr, FALSE);
                 return;
             }
+        }
+        // 空白处点一下就在那里加一个点（1.3.0 曲线编辑器的手感）
+        if (sx >= curvePlot_.left && sx <= curvePlot_.right && sy >= curvePlot_.top && sy <= curvePlot_.bottom) {
+            AddCurvePointAt(sx, sy);
+            return;
         }
     }
     for (auto& h : hits_) {
@@ -922,129 +1050,32 @@ void App::OnLButtonDown(int x, int y) {
             page_ = static_cast<Page>(_wtoi(id.c_str() + 4));
             scroll_ = 0.0f;
             InvalidateRect(hwnd_, nullptr, FALSE);
-        } else if (id == L"set:theme") {
-            const std::wstring next = config_.theme == L"System" ? L"Dark"
-                                      : config_.theme == L"Dark" ? L"Light"
-                                                                 : L"System";
-            config_.theme = next;
-            SendValue("theme", next == L"Dark" ? "\"Dark\"" : next == L"Light" ? "\"Light\"" : "\"System\"");
-            if (!hasInitial_) {
-                dark_ = next == L"Dark" ? true : next == L"Light" ? false : !SystemUsesLightTheme();
-                theme_ = MakeTheme(dark_);
-                BOOL useDark = dark_ ? TRUE : FALSE;
-                DwmSetWindowAttribute(hwnd_, 20, &useDark, sizeof(useDark));
-            }
-            InvalidateRect(hwnd_, nullptr, FALSE);
-        } else if (id == L"set:lang") {
-            const bool toEn = !fc::IsEn();
-            config_.language = toEn ? L"en-US" : L"zh-CN";
-            fc::SetLang(toEn ? fc::Lang::En : fc::Lang::Zh);
-            SendValue("language", toEn ? "\"en-US\"" : "\"zh-CN\"");
-            InvalidateRect(hwnd_, nullptr, FALSE);
-        } else if (id == L"set:unit") {
-            config_.temperatureUnit = config_.temperatureUnit == L"Fahrenheit" ? L"Celsius" : L"Fahrenheit";
-            SendValue("temperatureUnit", config_.temperatureUnit == L"Fahrenheit" ? "\"Fahrenheit\"" : "\"Celsius\"");
-            InvalidateRect(hwnd_, nullptr, FALSE);
-        } else if (id == L"set:autostart") {
-            autostart_ = !autostart_;
-            SendAutostart(autostart_);
-            InvalidateRect(hwnd_, nullptr, FALSE);
-        } else if (id == L"set:notifytemp") {
-            config_.notifyOnTemperatureError = !config_.notifyOnTemperatureError;
-            SendValue("notifyOnTemperatureError", config_.notifyOnTemperatureError ? "true" : "false");
-            InvalidateRect(hwnd_, nullptr, FALSE);
-        } else if (id == L"set:mode") {
-            static const wchar_t* kModes[] = { L"Manual", L"CpuTemp",   L"GpuTemp", L"Mixed",
-                                               L"MixedAvg", L"TargetRpm", L"SystemFan" };
-            int index = 0;
-            for (int i = 0; i < 7; ++i) {
-                if (config_.fanControlMode == kModes[i]) index = i;
-            }
-            index = (index + 1) % 7;
-            config_.fanControlMode = kModes[index];
-            SendString("fanControlMode", config_.fanControlMode);
-            InvalidateRect(hwnd_, nullptr, FALSE);
-        } else if (id == L"set:manualpwm") {
-            const int next = SliderValueAt(id, static_cast<int>(sx), static_cast<int>(std::lround(config_.manualPwmPercent)));
-            config_.manualPwmPercent = next;
-            char buffer[16];
-            std::snprintf(buffer, sizeof(buffer), "%d", next);
-            SendValue("manualPwmPercent", buffer);
-            InvalidateRect(hwnd_, nullptr, FALSE);
-        } else if (id == L"set:gpusrc") {
-            config_.gpuTemperatureSource = config_.gpuTemperatureSource.empty() ? L"NvidiaSmiAdl" : L"";
-            SendValue("gpuSourceEnabled", config_.gpuTemperatureSource.empty() ? "false" : "true");
-            InvalidateRect(hwnd_, nullptr, FALSE);
-        } else if (id == L"set:gpusel") {
-            OpenDialog(Dialog::Gpus);
-        } else if (id == L"set:bledev") {
-            OpenDialog(Dialog::BleDevices);
-        } else if (id == L"set:comport") {
-            OpenDialog(Dialog::Ports);
-        } else if (id == L"set:baud") {
-            static const int kBauds[] = { 9600, 19200, 38400, 57600, 115200, 230400 };
-            int index = 0;
-            for (int i = 0; i < 6; ++i) {
-                if (config_.comBaudRate == kBauds[i]) index = i;
-            }
-            index = (index + 1) % 6;
-            config_.comBaudRate = kBauds[index];
-            char buffer[16];
-            std::snprintf(buffer, sizeof(buffer), "%d", config_.comBaudRate);
-            SendValue("comBaudRate", buffer);
-            InvalidateRect(hwnd_, nullptr, FALSE);
+        } else if (id.rfind(L"set:", 0) == 0) {
+            HandleSettingClick(id, h.rect, static_cast<int>(std::lround(sx)));
         } else if (id == L"chip:curve:temp" || id == L"chip:curve:rpm") {
             curveTab_ = (id == L"chip:curve:rpm") ? 1 : 0;
             dragIndex_ = -1;
             InvalidateRect(hwnd_, nullptr, FALSE);
-        } else if (id == L"set:autoreconnect") {
-            config_.autoReconnectBle = !config_.autoReconnectBle;
-            SendValue("autoReconnectBle", config_.autoReconnectBle ? "true" : "false");
-            InvalidateRect(hwnd_, nullptr, FALSE);
-        } else if (id == L"set:reconnect") {
-            static const int kIntervals[] = { 1, 2, 5, 10, 15, 30, 60 };
-            int index = 0;
-            for (int i = 0; i < 7; ++i) {
-                if (config_.bleReconnectIntervalSeconds == kIntervals[i]) index = i;
+        } else if (id == L"act:reconnect") {
+            {
+                std::lock_guard<std::mutex> lock(sendMutex_);
+                if (ipc_ && ipc_->IsOpen()) ipc_->RequestReconnect();
             }
-            index = (index + 1) % 7;
-            config_.bleReconnectIntervalSeconds = kIntervals[index];
-            char buffer[16];
-            std::snprintf(buffer, sizeof(buffer), "%d", config_.bleReconnectIntervalSeconds);
-            SendValue("bleReconnectIntervalSeconds", buffer);
+            toast_.clear();  // 状态由下一帧 state 带回来，这里不假装成功
             InvalidateRect(hwnd_, nullptr, FALSE);
-        } else if (id == L"set:notify") {
-            config_.notifyOnBleDisconnect = !config_.notifyOnBleDisconnect;
-            SendValue("notifyOnBleDisconnect", config_.notifyOnBleDisconnect ? "true" : "false");
-            InvalidateRect(hwnd_, nullptr, FALSE);
-        } else if (id == L"set:smooth") {
-            smoothMs_ = SliderValueAt(id, static_cast<int>(sx), smoothMs_);
-            char buffer[32];
-            std::snprintf(buffer, sizeof(buffer), "%.2f", smoothMs_ / 1000.0);
-            SendValue("pwmSmoothingWindowSeconds", buffer);
-            InvalidateRect(hwnd_, nullptr, FALSE);
-        } else if (id == L"set:tempsrc") {
-            static const wchar_t* kSources[] = { L"LibreHardwareMonitor", L"AtkAcpi", L"Wmi", L"Aida64" };
-            static const char* kJson[] = { "\"LibreHardwareMonitor\"", "\"AtkAcpi\"", "\"Wmi\"", "\"Aida64\"" };
-            int index = 0;
-            for (int i = 0; i < 4; ++i) if (config_.temperatureSource == kSources[i]) index = i;
-            index = (index + 1) % 4;
-            config_.temperatureSource = kSources[index];
-            SendValue("temperatureSource", kJson[index]);
-            InvalidateRect(hwnd_, nullptr, FALSE);
-        } else if (id == L"set:fansrc") {
-            static const wchar_t* kSources[] = { L"AtkAcpi", L"LibreHardwareMonitor", L"Aida64", L"Simulated" };
-            static const char* kJson[] = { "\"AtkAcpi\"", "\"LibreHardwareMonitor\"", "\"Aida64\"", "\"Simulated\"" };
-            int index = 0;
-            for (int i = 0; i < 4; ++i) if (config_.fanSpeedSource == kSources[i]) index = i;
-            index = (index + 1) % 4;
-            config_.fanSpeedSource = kSources[index];
-            SendValue("fanSpeedSource", kJson[index]);
-            InvalidateRect(hwnd_, nullptr, FALSE);
-        } else if (id == L"set:comm") {
-            config_.communicationType = config_.communicationType == L"Com" ? L"Ble" : L"Com";
-            SendValue("communicationType", config_.communicationType == L"Com" ? "\"Com\"" : "\"Ble\"");
-            InvalidateRect(hwnd_, nullptr, FALSE);
+        } else if (id == L"settings:reload") {
+            ReloadFromBackend();
+        } else if (id == L"curve:add") {
+            AddCurvePointAt(curvePlot_.left + (curvePlot_.right - curvePlot_.left) * 0.5f,
+                            curvePlot_.top + (curvePlot_.bottom - curvePlot_.top) * 0.5f);
+        } else if (id == L"curve:del") {
+            std::vector<Point2>& points = curveTab_ == 0 ? curve_ : rpmCurve_;
+            if (curveSelected_ >= 0 && curveSelected_ < static_cast<int>(points.size()) && points.size() > 2) {
+                points.erase(points.begin() + curveSelected_);
+                curveSelected_ = -1;
+                PushCurveToBackend();
+                InvalidateRect(hwnd_, nullptr, FALSE);
+            }
         } else if (id == L"set:logs" || id == L"chip:logs") {
             ShellExecuteW(nullptr, L"open", L"explorer.exe", L"%APPDATA%\\FanControl\\Logs", nullptr, SW_SHOWNORMAL);
         } else if (id == L"chip:apply") {
@@ -1073,11 +1104,9 @@ void App::OnLButtonUp(int, int) {
 }
 
 void App::OnMouseWheel(int delta) {
-    if (dialog_ != Dialog::None) {
-        const int rowH = 54;
-        const int visible = std::max(1, static_cast<int>((std::min(440.0f, viewH_ - 120.0f) - 84.0f) / rowH));
-        const int maxFirst = std::max(0, static_cast<int>(dialogItems_.size()) - visible);
-        dialogScroll_ = std::clamp(dialogScroll_ - delta / 120 * 2, 0, maxFirst);
+    if (!comboOpen_.empty()) {  // 下拉浮层不随页面滚动，滚轮只在列表内部翻页
+        const int count = static_cast<int>(comboItems_.size());
+        comboScroll_ = std::clamp(comboScroll_ - static_cast<int>(delta / 120), 0, std::max(0, count - 8));
         InvalidateRect(hwnd_, nullptr, FALSE);
         return;
     }
@@ -1194,11 +1223,13 @@ void App::OnIpcMessage(void* payload) {
         toastUntil_ = GetTickCount() + 4000;
     }
     if (message->hasItems) {
-        dialogItems_.clear();
-        dialogItems_.reserve(message->items.size());
-        for (const auto& item : message->items) dialogItems_.emplace_back(item.label, item.value);
-        dialogScroll_ = 0;
-        dialogBusy_ = false;
+        // GPU 列表是异步回来的：保留第一项「自动」，再把后台枚举到的卡接上
+        const std::wstring openId = comboOpen_;
+        comboItems_.clear();
+        comboItems_.reserve(message->items.size() + 1);
+        if (openId == L"set:gpusel") comboItems_.push_back(ComboItem{ fc::T(L"自动"), L"Auto" });
+        for (const auto& item : message->items) comboItems_.push_back(ComboItem{ item.label, item.value });
+        comboBusy_ = false;
     }
     if (message->hasAutostart) autostart_ = message->autostart;
     InvalidateRect(hwnd_, nullptr, FALSE);
@@ -1261,7 +1292,10 @@ void App::ApplyState(const fc::State& state) {
     snap_.commErrorCode = state.commErrorCode;
     snap_.commErrorArg1 = state.commErrorArg1;
     snap_.commErrorArg2 = state.commErrorArg2;
+    snap_.connectionState = state.connectionState;
     autostart_ = state.autostart;
+    logEnabled_ = state.logEnabled;
+    userDataLocation_ = state.userDataLocation;
     if (cpuHist_.empty()) {
         // 首次连上后台：用当前值铺满窗口，避免趋势图一开始只有左端一两个点
         for (int i = 0; i < kHistoryPoints; ++i) {
@@ -1333,12 +1367,155 @@ std::wstring App::LangLabel() const {
 }
 
 
+std::wstring App::GpuSourceLabel() const {
+    const std::wstring& source = config_.gpuTemperatureSource;
+    if (source.empty() || source == L"NvidiaSmiAdl") return L"NVIDIA nvidia-smi";
+    if (source == L"AtkAcpi") return L"ATK ACPI";
+    if (source == L"Aida64") return L"AIDA64";
+    return L"LibreHardwareMonitor";
+}
+
+std::wstring App::DataDirLabel() const {
+    return userDataLocation_ == L"ExeDirectory" ? fc::T(L"安装目录") : fc::T(L"应用数据目录");
+}
+
+std::wstring App::ConnectionLabel() const {
+    if (snap_.connectionState == L"Connected") return fc::T(L"已连接");
+    if (snap_.connectionState == L"Reconnecting") return fc::T(L"重连中");
+    return fc::T(L"等待连接");
+}
+
+std::wstring App::CurrentComboLabel(const std::wstring& id) const {
+    // label 必须与 FillComboItems 里写的一字不差，否则浮层里的勾选标记对不上。
+    if (id == L"set:theme") return ThemeLabel();
+    if (id == L"set:lang") return LangLabel();
+    if (id == L"set:unit") return UnitLabel();
+    if (id == L"set:tempsrc") return SourceLabel(config_.temperatureSource);
+    if (id == L"set:gpusrc") return GpuSourceLabel();
+    if (id == L"set:fansrc") return SourceLabel(config_.fanSpeedSource);
+    if (id == L"set:mode") return ModeLabel(config_.fanControlMode);
+    if (id == L"set:comm") return config_.communicationType == L"Com" ? fc::T(L"串口") : fc::T(L"蓝牙 BLE");
+    if (id == L"set:baud") return std::to_wstring(config_.comBaudRate);
+    if (id == L"set:datadir") return DataDirLabel();
+    if (id == L"set:gpusel") return config_.gpuSelection.empty() || config_.gpuSelection == L"Auto" ? fc::T(L"自动") : config_.gpuSelection;
+    if (id == L"set:comport") return config_.comPort;
+    if (id == L"set:bledev") return DeviceLabel();
+    return std::wstring();
+}
+
+void App::SendSystem(const char* key, const std::string& valueJson) {
+    std::lock_guard<std::mutex> lock(sendMutex_);
+    if (ipc_ && ipc_->IsOpen()) ipc_->SetSystem(key, valueJson);
+}
+
+void App::ReloadFromBackend() {
+    std::lock_guard<std::mutex> lock(sendMutex_);
+    if (ipc_ && ipc_->IsOpen()) ipc_->RequestState();
+}
+
+void App::HandleSettingClick(const std::wstring& id, D2D1_RECT_F rect, int clickX) {
+    // 下拉行：把行矩形记成浮层锚点，列表内容由 FillComboItems 准备
+    static const wchar_t* kComboRows[] = { L"set:tempsrc", L"set:gpusrc",  L"set:gpusel", L"set:fansrc",
+                                           L"set:mode",    L"set:comm",    L"set:comport", L"set:baud",
+                                           L"set:bledev",  L"set:theme",   L"set:lang",    L"set:unit",
+                                           L"set:datadir" };
+    for (const wchar_t* row : kComboRows) {
+        if (id == row) {
+            comboAnchor_ = rect;
+            OpenCombo(id);
+            return;
+        }
+    }
+
+    if (id == L"set:manualpwm") {
+        const int next = static_cast<int>(std::lround(SliderValueAt(id, clickX, config_.manualPwmPercent)));
+        config_.manualPwmPercent = next;
+        char buffer[16];
+        std::snprintf(buffer, sizeof(buffer), "%d", next);
+        SendValue("manualPwmPercent", buffer);
+    } else if (id == L"set:smooth") {
+        const double seconds = std::round(SliderValueAt(id, clickX, config_.pwmSmoothingWindowSeconds) * 10.0) / 10.0;
+        config_.pwmSmoothingWindowSeconds = seconds;
+        smoothMs_ = std::clamp(static_cast<int>(seconds * 1000.0), 100, 3000);
+        char buffer[32];
+        std::snprintf(buffer, sizeof(buffer), "%.1f", seconds);
+        SendValue("pwmSmoothingWindowSeconds", buffer);
+    } else if (id == L"set:poll") {
+        const double seconds =
+            std::round(SliderValueAt(id, clickX, config_.pollIntervalMilliseconds / 1000.0) * 10.0) / 10.0;
+        config_.pollIntervalMilliseconds = static_cast<int>(std::lround(seconds * 1000.0));
+        char buffer[16];
+        std::snprintf(buffer, sizeof(buffer), "%d", config_.pollIntervalMilliseconds);
+        SendValue("pollIntervalMilliseconds", buffer);
+    } else if (id == L"set:blepoll") {
+        const int next = static_cast<int>(std::lround(SliderValueAt(id, clickX, config_.blePollIntervalSeconds)));
+        config_.blePollIntervalSeconds = next;
+        char buffer[16];
+        std::snprintf(buffer, sizeof(buffer), "%d", next);
+        SendValue("blePollIntervalSeconds", buffer);
+    } else if (id == L"set:reconnect") {
+        const int next = static_cast<int>(std::lround(SliderValueAt(id, clickX, config_.bleReconnectIntervalSeconds)));
+        config_.bleReconnectIntervalSeconds = next;
+        char buffer[16];
+        std::snprintf(buffer, sizeof(buffer), "%d", next);
+        SendValue("bleReconnectIntervalSeconds", buffer);
+    } else if (id == L"set:autostart") {
+        autostart_ = !autostart_;
+        SendAutostart(autostart_);
+    } else if (id == L"set:smoothenable") {
+        config_.smoothingEnabled = !config_.smoothingEnabled;
+        SendValue("smoothingEnabled", config_.smoothingEnabled ? "true" : "false");
+    } else if (id == L"set:autoreconnect") {
+        config_.autoReconnectBle = !config_.autoReconnectBle;
+        SendValue("autoReconnectBle", config_.autoReconnectBle ? "true" : "false");
+    } else if (id == L"set:notify") {
+        config_.notifyOnBleDisconnect = !config_.notifyOnBleDisconnect;
+        SendValue("notifyOnBleDisconnect", config_.notifyOnBleDisconnect ? "true" : "false");
+    } else if (id == L"set:notifytemp") {
+        config_.notifyOnTemperatureError = !config_.notifyOnTemperatureError;
+        SendValue("notifyOnTemperatureError", config_.notifyOnTemperatureError ? "true" : "false");
+    } else if (id == L"set:logenabled") {
+        logEnabled_ = !logEnabled_;
+        SendSystem("logEnabled", logEnabled_ ? "true" : "false");
+    }
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+void App::AddCurvePointAt(float sx, float sy) {
+    if (curvePlot_.right <= curvePlot_.left || curvePlot_.bottom <= curvePlot_.top) return;
+    std::vector<Point2>& points = curveTab_ == 0 ? curve_ : rpmCurve_;
+    const double xMax = curveTab_ == 0 ? 120.0 : 10000.0;
+    const double t = std::clamp(static_cast<double>((sx - curvePlot_.left) / (curvePlot_.right - curvePlot_.left)) * xMax,
+                                0.0, xMax);
+    const double p =
+        std::clamp(static_cast<double>((curvePlot_.bottom - sy) / (curvePlot_.bottom - curvePlot_.top)) * 100.0, 0.0, 100.0);
+    for (const auto& point : points) {  // 太近就不再加点，避免两个圆重叠后拖不清
+        if (std::abs(point.t - t) < xMax / 100.0) return;
+    }
+    points.push_back(Point2{ t, p });
+    std::sort(points.begin(), points.end(), [](const Point2& a, const Point2& b) { return a.t < b.t; });
+    curveSelected_ = -1;
+    for (size_t i = 0; i < points.size(); ++i) {
+        if (std::abs(points[i].t - t) < 1e-9) curveSelected_ = static_cast<int>(i);
+    }
+    PushCurveToBackend();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
 void App::StartHostProcess() {
-    wchar_t path[MAX_PATH] = {};
-    GetModuleFileNameW(nullptr, path, MAX_PATH);
-    if (wchar_t* slash = wcsrchr(path, L'\\')) *(slash + 1) = L'\0';
+    wchar_t dir[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, dir, MAX_PATH);
+    if (wchar_t* slash = wcsrchr(dir, L'\\')) *(slash + 1) = L'\0';
     else return;
-    wcscat_s(path, L"FanControl.Host.exe");
+    // 优先用启动器（FanControl.exe）：它带管理员清单，一次 UAC 就能把后台拉起来并通知它显示界面；
+    // 没有启动器时退回直接拉守护进程。
+    wchar_t path[MAX_PATH] = {};
+    wcscpy_s(path, dir);
+    wcscat_s(path, L"FanControl.exe");
+    if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES) {
+        wcscpy_s(path, dir);
+        wcscat_s(path, L"FanControl.Host.exe");
+    }
     if (GetFileAttributesW(path) == INVALID_FILE_ATTRIBUTES) return;
     // 守护进程需要管理员权限：首次连接失败时按需提权拉起
     auto result = reinterpret_cast<INT_PTR>(

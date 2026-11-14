@@ -38,14 +38,16 @@
 | `listPorts` | — | 枚举串口，回 `{"event":"ports","ports":["COM3",…]}` |
 | `listGpus` | — | 枚举显卡名（WMI，失败回退 nvidia-smi），回 `{"event":"gpus","gpus":[…]}` |
 | `setAutostart` | `value`（布尔） | 写入/删除计划任务 `FanControl`，成功回 `{"event":"ok","cmd":"setAutostart","autostart":true}` |
+| `setSystem` | `key`、`value` | 改**系统级**配置（存在 system.json，不进 AppConfig）：`logEnabled`（布尔）、`userDataLocation`（`AppData` / `ExeDirectory`）、`maxLogFiles`（1–200）；成功先广播 `state` 再回 `{"event":"ok","cmd":"setSystem"}` |
 
 事件（后台 → 界面）：`hello` / `state` / `config` / `ok` / `error` / `bleDevices` / `ports` / `gpus`。
 
-`state` 字段：`cpu`、`gpu`、`rpm`、`pwm`、`rawPwm`、`mode`、`connectionState`、`connected`、`communicationType`、`deviceName`、`lastError`、`errorCode`、`errorArg1`、`errorArg2`、`commError`、`commErrorCode`、`commErrorArg1`、`commErrorArg2`、`autostart`、`timestamp`（epoch ms）。
+`state` 字段：`cpu`、`gpu`、`rpm`、`pwm`、`rawPwm`、`mode`、`connectionState`、`connected`、`communicationType`、`deviceName`、`lastError`、`errorCode`、`errorArg1`、`errorArg2`、`commError`、`commErrorCode`、`commErrorArg1`、`commErrorArg2`、`autostart`、`logEnabled`、`userDataLocation`（`AppData` / `ExeDirectory`）、`timestamp`（epoch ms）。
 
 - `lastError*` 是**采样线程**的异常（温度/转速读取失败）；
 - `commError*` 是**通信线程**的异常（BLE/串口连不上、写入失败），链路恢复时清空；
-- `autostart` 是计划任务的实际状态，界面不自行猜测（托盘里也能改，改完广播 `state`）。
+- `autostart` 是计划任务的实际状态，界面不自行猜测（托盘里也能改，改完广播 `state`）；
+- `userDataLocation` 改动后要**重启后台**才切根目录（后台会把已有 `Config\` 与 `Logs\` 迁到新根），界面在这行副标题里写明「重启后生效」。
 
 ### 错误码
 
@@ -71,7 +73,7 @@
 
 `config` 字段（camelCase）：`temperatureSource`、`gpuTemperatureSource`、`gpuSelection`、`fanSpeedSource`、`fanControlMode`、`communicationType`、`comPort`、`comBaudRate`、`bleDeviceMac`、`bleDeviceName`、`pollIntervalMilliseconds`、`blePollIntervalSeconds`、`bleReconnectIntervalSeconds`、`autoReconnectBle`、`pwmSmoothingWindowSeconds`、`notifyOnBleDisconnect`、`notifyOnTemperatureError`、`language`、`temperatureUnit`、`theme`、`manualPwmPercent`、`smoothingEnabled`、`curve`、`rpmCurve`。
 
-`set` 的取值范围：`pollIntervalMilliseconds` 100–5000、`blePollIntervalSeconds` 1–30、`bleReconnectIntervalSeconds` 1–60、`pwmSmoothingWindowSeconds` 0–30、`manualPwmPercent` 0–100；枚举 key 的合法值见 `src/FanControl.Host/Ipc/ConfigPatch.cs`。
+`set` 的取值范围：`pollIntervalMilliseconds` 100–5000、`blePollIntervalSeconds` 1–30、`bleReconnectIntervalSeconds` 1–60、`pwmSmoothingWindowSeconds` 0.5–30、`manualPwmPercent` 0–100；枚举 key 的合法值见 `src/FanControl.Host/Ipc/ConfigPatch.cs`。
 
 安全：仅本地命名管道，ACL 为默认（同机同用户可连），后台不监听任何网络端口。
 

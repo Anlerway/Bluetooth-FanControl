@@ -28,6 +28,8 @@
 
 > 界面支持简体中文与英文，可在 **设置 → 语言** 切换（英文界面见 [README.en.md](README.en.md)）。选择写入 `AppConfig.Language`，重启后保持。
 
+> 设置页与 1.3.0 一一对应：温度/风扇、通信、系统三张卡共 25 项，全部选择项都是行内下拉框（不再弹模态窗）。配置文件路径与字段沿用 1.3.0（`%AppData%\FanControl\Config\` 或安装目录 `Userdata\Config\`），安装包 AppId 也未变，可直接覆盖升级。
+
 ## 简介
 
 在垃圾研究社开源硬件的基础上，针对实际体验做了完整重制：
@@ -81,6 +83,7 @@
 
 前后台两个进程：
 
+- **启动器 `FanControl.exe`**（C++，带管理员清单）是唯一用户入口：后台没跑就拉起后台，再唤出界面，整套只弹一次 UAC；
 - **后台 `FanControl.Host.exe`**（C#，需管理员）常驻运行，独占采样循环、PWM 计算、BLE/COM 通信、配置落盘与托盘图标；
 - **界面 `FanControl.UI.exe`**（C++20 + Direct2D/DirectWrite，普通权限）按需启动，通过命名管道 `FanControl.Host.v1` 读状态、下发配置；关掉界面风扇照常受控。
 
@@ -143,12 +146,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File installer\_build-release.ps1
 
 ## 运行
 
-解压免安装压缩包或安装后运行 `FanControl.UI.exe`（找不到后台时会按需提权拉起 `FanControl.Host.exe`，也可直接运行后台只留托盘）：
+解压免安装压缩包或安装后运行 `FanControl.exe`（卸载、快捷方式、安装器都指向它；直接运行 `FanControl.UI.exe` 也行，找不到后台会按需提权拉起）：
 
 - 界面：仪表盘（实时温度/趋势）、设置、曲线编辑器、关于；
 - 托盘（属于后台进程）：打开主界面 / 重建连接 / 开机自启 / 退出；关掉界面不影响风扇控制；
 - 后台需要管理员权限（访问硬件传感器），开机自启通过任务计划以最高权限静默运行；
-- 两个 exe 必须放在同一目录（界面从自身目录找后台，后台从自身目录拉起界面）。
+- 三个 exe（`FanControl.exe` / `FanControl.Host.exe` / `FanControl.UI.exe`）必须放在同一目录：启动器从自身目录找后台，界面从自身目录找启动器，后台从自身目录拉起界面。
+- 开机自启的计划任务动作是 `<安装目录>\FanControl.exe --autostart`，与 1.3.0 完全一致——从旧版升级后原有自启任务继续有效，无需重设。
 
 ## 数据源说明
 

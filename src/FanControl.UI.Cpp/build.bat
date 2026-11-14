@@ -1,7 +1,6 @@
 @echo off
-rem 本地快速构建（MSVC 直接调 cl，不依赖 CMake）。产物: build\FanControl.UI.exe
-rem 若当前环境已有 cl（CI 的 msvc-dev-cmd，或已进 Developer Prompt），直接用；
-rem 否则依次尝试本机常见 vcvars64.bat 位置。
+rem Local quick build (MSVC cl directly, no CMake). Output: build\FanControl.UI.exe + build\FanControl.exe
+rem If cl is already on PATH (CI / Developer Prompt) use it, otherwise probe common vcvars64.bat locations.
 setlocal
 where cl >nul 2>nul
 if not errorlevel 1 goto build
@@ -22,7 +21,10 @@ call "%VCVARS%" >nul
 
 :build
 if not exist build mkdir build
+if not exist build\launcher mkdir build\launcher
 rc /nologo /fo build\resource.res resource.rc
+if errorlevel 1 exit /b 1
+rc /nologo /fo build\launcher.res launcher.rc
 if errorlevel 1 exit /b 1
 cl /nologo /std:c++20 /EHsc /utf-8 /W4 /permissive- ^
    /DUNICODE /D_UNICODE /DNOMINMAX /DWIN32_LEAN_AND_MEAN ^
@@ -30,6 +32,15 @@ cl /nologo /std:c++20 /EHsc /utf-8 /W4 /permissive- ^
    src\main.cpp src\app.cpp src\ipc.cpp src\i18n.cpp build\resource.res ^
    /link /SUBSYSTEM:WINDOWS /MANIFEST:EMBED /MANIFESTINPUT:app.manifest ^
    d2d1.lib dwrite.lib dwmapi.lib user32.lib gdi32.lib shell32.lib ole32.lib advapi32.lib
+if errorlevel 1 exit /b 1
+rem Elevation launcher: installer and the ONLOGON task point at FanControl.exe
+cl /nologo /std:c++20 /EHsc /utf-8 /W4 /permissive- ^
+   /DUNICODE /D_UNICODE /DNOMINMAX /DWIN32_LEAN_AND_MEAN ^
+   /Fo:build\launcher\ /Fe:build\FanControl.exe ^
+   src\launcher.cpp build\launcher.res ^
+   /link /SUBSYSTEM:WINDOWS /MANIFEST:EMBED /MANIFESTINPUT:launcher.manifest ^
+   /MANIFESTUAC:"level='requireAdministrator' uiAccess='false'" ^
+   user32.lib shell32.lib
 exit /b %ERRORLEVEL%
 
 :try

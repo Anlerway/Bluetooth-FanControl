@@ -77,13 +77,16 @@ function Invoke-UiBuild {
 
     $exe = Join-Path $script:UiProjectDir 'build\FanControl.UI.exe'
     if (-not (Test-Path $exe)) { throw "FanControl.UI.exe missing after build: $exe" }
-    Write-Host ("   ok: FanControl.UI.exe, {0:N0} bytes" -f (Get-Item $exe).Length)
-    return $exe
+    # 启动器：管理员权限入口，安装器与快捷方式都指向它
+    $launcher = Join-Path $script:UiProjectDir 'build\FanControl.exe'
+    if (-not (Test-Path $launcher)) { throw "FanControl.exe (launcher) missing after build: $launcher" }
+    Write-Host ("   ok: FanControl.UI.exe {0:N0} bytes, FanControl.exe {1:N0} bytes" -f (Get-Item $exe).Length, (Get-Item $launcher).Length)
+    return @($exe, $launcher)
 }
 
 # --- 2) 发布后台 ------------------------------------------------------
 function Invoke-Publish {
-    param([string]$Name, [string]$OutDir, [bool]$SelfContained, [string]$UiExe)
+    param([string]$Name, [string]$OutDir, [bool]$SelfContained, [string[]]$UiExes)
 
     Write-Host "`n-- publish [$Name] -> $OutDir" -ForegroundColor Yellow
     if (Test-Path $OutDir) { Remove-Item $OutDir -Recurse -Force }
@@ -107,11 +110,11 @@ function Invoke-Publish {
     $hostExe = Join-Path $OutDir 'FanControl.Host.exe'
     if (-not (Test-Path $hostExe)) { throw "FanControl.Host.exe missing in publish output: $OutDir" }
 
-    Copy-Item $UiExe (Join-Path $OutDir 'FanControl.UI.exe') -Force
+    foreach ($uiExe in $UiExes) { Copy-Item $uiExe (Join-Path $OutDir (Split-Path $uiExe -Leaf)) -Force }
 
     $files = Get-ChildItem $OutDir -Recurse -File
     $size = [math]::Round(($files | Measure-Object Length -Sum).Sum / 1MB, 1)
-    Write-Host ("   ok: FanControl.Host.exe + FanControl.UI.exe, {0} files / {1} MB" -f $files.Count, $size)
+    Write-Host ("   ok: FanControl.Host.exe + FanControl.UI.exe + FanControl.exe, {0} files / {1} MB" -f $files.Count, $size)
 }
 
 function New-ZipPackage {
@@ -139,13 +142,13 @@ function Invoke-Iscc {
 }
 
 # --- 主流程 -----------------------------------------------------------
-$uiExe = Invoke-UiBuild
+$uiExes = @(Invoke-UiBuild)
 
 $selfContainedDir = Join-Path $ReleaseRoot 'selfcontained'
 $frameworkDir = Join-Path $ReleaseRoot 'framework'
 
-Invoke-Publish -Name 'self-contained' -OutDir $selfContainedDir -SelfContained $true -UiExe $uiExe
-Invoke-Publish -Name 'framework-dependent (.NET 8 required)' -OutDir $frameworkDir -SelfContained $false -UiExe $uiExe
+Invoke-Publish -Name 'self-contained' -OutDir $selfContainedDir -SelfContained $true -UiExes $uiExes
+Invoke-Publish -Name 'framework-dependent (.NET 8 required)' -OutDir $frameworkDir -SelfContained $false -UiExes $uiExes
 
 New-ZipPackage -SourceDir $selfContainedDir -ZipPath (Join-Path $ReleaseRoot $packageNames['zip-selfcontained'])
 New-ZipPackage -SourceDir $frameworkDir -ZipPath (Join-Path $ReleaseRoot $packageNames['zip-framework'])

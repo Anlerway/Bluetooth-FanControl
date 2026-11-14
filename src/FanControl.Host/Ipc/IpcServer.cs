@@ -25,6 +25,7 @@ internal sealed class IpcServer : IAsyncDisposable
     private static readonly JsonSerializerOptions ReplyOptions = new() { Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
 
     private readonly FanControlRuntime _runtime;
+    private readonly SystemSettings _system;
     private readonly Action _showWindow;
     private readonly ILogger _logger;
     private readonly CancellationTokenSource _cts = new();
@@ -34,9 +35,10 @@ internal sealed class IpcServer : IAsyncDisposable
     private Task? _pushLoop;
     private volatile bool _autostart;
 
-    public IpcServer(FanControlRuntime runtime, Action showWindow, ILogger logger)
+    public IpcServer(FanControlRuntime runtime, SystemSettings system, Action showWindow, ILogger logger)
     {
         _runtime = runtime;
+        _system = system;
         _showWindow = showWindow;
         _logger = logger;
     }
@@ -101,7 +103,7 @@ internal sealed class IpcServer : IAsyncDisposable
             // 连上就先推一份完整快照，界面不必额外请求；开机自启状态每次连接时重新查询，
             // 这样从托盘菜单改过的开关也能同步到界面。
             await RefreshAutostartAsync().ConfigureAwait(false);
-            await session.SendAsync(StateJson.BuildState(_runtime, _autostart), cancellationToken).ConfigureAwait(false);
+            await session.SendAsync(StateJson.BuildState(_runtime, _autostart, _system.Current), cancellationToken).ConfigureAwait(false);
 
             while (!cancellationToken.IsCancellationRequested)
             {
@@ -166,7 +168,7 @@ internal sealed class IpcServer : IAsyncDisposable
                     break;
 
                 case "getState":
-                    await session.SendAsync(StateJson.BuildState(_runtime, _autostart), cancellationToken).ConfigureAwait(false);
+                    await session.SendAsync(StateJson.BuildState(_runtime, _autostart, _system.Current), cancellationToken).ConfigureAwait(false);
                     break;
 
                 case "set":
@@ -205,6 +207,10 @@ internal sealed class IpcServer : IAsyncDisposable
 
                 case "setAutostart":
                     await HandleSetAutostartAsync(session, root, cancellationToken).ConfigureAwait(false);
+                    break;
+
+                case "setSystem":
+                    await HandleSetSystemAsync(session, root, cancellationToken).ConfigureAwait(false);
                     break;
 
                 case "showWindow":
@@ -318,8 +324,34 @@ internal sealed class IpcServer : IAsyncDisposable
             return;
         }
 
-        await BroadcastAsync(StateJson.BuildState(_runtime, _autostart), cancellationToken).ConfigureAwait(false);
+        await BroadcastAsync(StateJson.BuildState(_runtime, _autostart, _system.Current), cancellationToken).ConfigureAwait(false);
         await session.SendAsync(Reply(new { @event = "ok", cmd = "setAutostart", autostart = _autostart }), cancellationToken).ConfigureAwait(false);
+    }
+
+    private async Task HandleSetSystemAsync(ClientSession session, JsonElement root, CancellationToken cancellationToken)
+    {
+        if (!root.TryGetProperty("key", out var keyElement) || keyElement.ValueKind != JsonValueKind.String)
+        {
+            await session.SendAsync(Error(ErrorInfo.Of("ipc.missingKey", "缺少 key。")), cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        if (!root.TryGetProperty("value", out var value))
+        {
+            await session.SendAsync(Error(ErrorInfo.Of("ipc.missingValue", "缺少 value。")), cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        var key = keyElement.GetString() ?? string.Empty;
+        var error = await _system.ApplyAsync(key, value).ConfigureAwait(false);
+        if (error is not null)
+        {
+            await session.SendAsync(Error(error), cancellationToken).ConfigureAwait(false);
+            return;
+        }
+
+        await BroadcastAsync(StateJson.BuildState(_runtime, _autostart, _system.Current), cancellationToken).ConfigureAwait(false);
+        await session.SendAsync(Reply(new { @event = "ok", cmd = "setSystem" }), cancellationToken).ConfigureAwait(false);
     }
 
     private async Task RefreshAutostartAsync()
@@ -347,7 +379,7 @@ internal sealed class IpcServer : IAsyncDisposable
             return;
         }
 
-        await BroadcastAsync(StateJson.BuildConfig(_runtime, _autostart), cancellationToken).ConfigureAwait(false);
+        await BroadcastAsync(StateJson.BuildConfig(_runtime, _autostart, _system.Current), cancellationToken).ConfigureAwait(false);
         await session.SendAsync(Reply(new { @event = "ok", cmd = "set" }), cancellationToken).ConfigureAwait(false);
     }
 
@@ -369,7 +401,7 @@ internal sealed class IpcServer : IAsyncDisposable
                 continue;
             }
 
-            await BroadcastAsync(StateJson.BuildState(_runtime, _autostart), cancellationToken).ConfigureAwait(false);
+            await BroadcastAsync(StateJson.BuildState(_runtime, _autostart, _system.Current), cancellationToken).ConfigureAwait(false);
         }
     }
 

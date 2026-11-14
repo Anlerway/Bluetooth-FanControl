@@ -1,0 +1,5 @@
+#include <windows.h>
+
+#define IDI_LAUNCHER 101
+
+IDI_LAUNCHER ICON "app.ico"

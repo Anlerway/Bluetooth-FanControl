@@ -3,7 +3,8 @@
 ;   ISCC.exe installer.iss /DAppSource="...\selfcontained" /DOutputName="FanControl-Setup-Full-1.4.0"
 ;   ISCC.exe installer.iss /DAppSource="...\framework"     /DOutputName="FanControl-Setup-Slim-1.4.0"
 ;
-; 安装内容是两个 exe：FanControl.Host.exe（后台守护，随开机自启）与 FanControl.UI.exe（界面，按需拉起）。
+; 安装内容是三个 exe：FanControl.exe（管理员启动器，安装器与快捷方式指向它）、
+; FanControl.Host.exe（后台守护，随开机自启，由启动器拉起）与 FanControl.UI.exe（界面，按需拉起）。
 ;
 ; 注意：安装阶段不检测 .NET 运行环境。
 ; “需环境版”装到未安装 .NET 8 的机器上依然可以正常安装，由程序首次启动时自行提示。
@@ -14,7 +15,7 @@
 #endif
 #define MyAppVersion AppVersion
 #define MyAppPublisher "anlerway"
-#define MyAppExeName "FanControl.Host.exe"
+#define MyAppExeName "FanControl.exe"
 
 #ifndef AppSource
   #define AppSource "..\..\artifacts\release\selfcontained"
@@ -50,7 +51,7 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 SetupIconFile=..\src\FanControl.UI.Cpp\app.ico
-UninstallDisplayIcon={app}\FanControl.Host.exe
+UninstallDisplayIcon={app}\FanControl.exe
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 
@@ -76,13 +77,14 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent
 
 [Code]
-// 安装/覆盖/卸载前先关闭正在运行的进程：界面与后台各一个 exe，避免文件被占用
+// 安装/覆盖/卸载前先关闭正在运行的进程：启动器、界面、后台各一个 exe，避免文件被占用
 procedure KillFanControl();
 var
   ResultCode: Integer;
 begin
   Exec('taskkill.exe', '/IM FanControl.UI.exe /T /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
   Exec('taskkill.exe', '/IM FanControl.Host.exe /T /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  Exec('taskkill.exe', '/IM FanControl.exe /T /F', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;

@@ -511,6 +511,7 @@ internal static class Native
         public IntPtr hbrBackground;
         [MarshalAs(UnmanagedType.LPWStr)] public string? lpszMenuName;
         [MarshalAs(UnmanagedType.LPWStr)] public string lpszClassName;
+        public IntPtr hIconSm;
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -602,7 +603,7 @@ internal static class Native
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
     public static extern uint ExtractIconExW(string lpszFile, int nIconIndex, out IntPtr phiconLarge, out IntPtr phiconSmall, uint nIcons);
 
-    [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    [DllImport("shell32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "Shell_NotifyIconW")]
     public static extern bool ShellNotifyIcon(uint dwMessage, ref NotifyIconData lpData);
 
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
