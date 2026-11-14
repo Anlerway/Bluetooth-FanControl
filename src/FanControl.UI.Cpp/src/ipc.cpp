@@ -302,6 +302,9 @@ void FillState(const JValue& node, State& state) {
     state.communicationType = Str(node.Get("communicationType"));
     state.deviceName = Str(node.Get("deviceName"));
     state.lastError = Str(node.Get("lastError"));
+    state.errorCode = Str(node.Get("errorCode"));
+    state.errorArg1 = Str(node.Get("errorArg1"));
+    state.errorArg2 = Str(node.Get("errorArg2"));
     state.connected = Bool(node.Get("connected"));
     state.timestamp = static_cast<long long>(Num(node.Get("timestamp")));
 }
@@ -429,6 +432,9 @@ bool IpcClient::ReadMessage(int timeoutMs, Message& message) {
     if (!JsonParser(payload).Parse(root) || root.kind != JValue::Obj) return false;
     message.event = Str(root.Get("event"));
     if (const JValue* error = root.Get("message")) message.error = Str(error);
+    if (const JValue* code = root.Get("code")) message.errorCode = Str(code);
+    if (const JValue* arg1 = root.Get("arg1")) message.errorArg1 = Str(arg1);
+    if (const JValue* arg2 = root.Get("arg2")) message.errorArg2 = Str(arg2);
     if (const JValue* config = root.Get("config")) {
         FillConfig(*config, message.config);
         message.hasConfig = true;

@@ -450,7 +450,9 @@ void App::DrawDashboard(float x, float y, float w) {
     KV rows[3] = {
         { fc::T(L"通信"), snap_.commMode },
         { fc::T(L"设备"), snap_.deviceConnected ? fc::T(L"已连接") : fc::T(L"未连接") },
-        { fc::T(L"最近错误"), snap_.lastError.empty() ? fc::T(L"无") : snap_.lastError },
+        { fc::T(L"最近错误"), snap_.lastError.empty()
+                                  ? std::wstring(fc::T(L"无"))
+                                  : fc::ErrorText(snap_.errorCode, snap_.errorArg1, snap_.errorArg2, snap_.lastError) },
     };
     float ry = y + 44;
     for (auto& kv : rows) {
@@ -911,6 +913,11 @@ void App::OnIpcMessage(void* payload) {
     if (!message) return;
     if (message->hasConfig) ApplyConfig(message->config);
     if (message->hasState) ApplyState(message->state);
+    if (message->event == L"error") {
+        // 后台只给 code + 参数，文案由界面按当前语言拼
+        toast_ = fc::ErrorText(message->errorCode, message->errorArg1, message->errorArg2, message->error);
+        toastUntil_ = GetTickCount() + 4000;
+    }
     InvalidateRect(hwnd_, nullptr, FALSE);
 }
 
@@ -958,7 +965,12 @@ void App::ApplyState(const fc::State& state) {
     const std::wstring prefix = state.communicationType == L"Com" ? std::wstring(fc::T(L"串口")) + L" · "
                                                                   : std::wstring(fc::T(L"蓝牙")) + L" · ";
     snap_.commMode = prefix + (state.deviceName.empty() ? std::wstring(fc::T(L"未配对设备")) : state.deviceName);
-    if (!state.lastError.empty()) snap_.lastError = state.lastError;
+    if (!state.lastError.empty()) {
+        snap_.lastError = state.lastError;
+        snap_.errorCode = state.errorCode;
+        snap_.errorArg1 = state.errorArg1;
+        snap_.errorArg2 = state.errorArg2;
+    }
     if (cpuHist_.empty()) {
         // 首次连上后台：用当前值铺满窗口，避免趋势图一开始只有左端一两个点
         for (int i = 0; i < kHistoryPoints; ++i) {

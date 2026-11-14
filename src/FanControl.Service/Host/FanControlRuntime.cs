@@ -3,6 +3,7 @@ using FanControl.Service.Config;
 using FanControl.Service.Fan;
 using FanControl.Service.Hardware;
 using FanControl.Service.Logging;
+using FanControl.Shared.Contracts;
 using FanControl.Shared.Enums;
 using FanControl.Shared.Models;
 using System.Diagnostics;
@@ -150,6 +151,9 @@ public sealed class FanControlRuntime : IAsyncDisposable
     /// <summary>最近一次采样/计算失败的原因（成功时清空）。</summary>
     public string? LastError { get; private set; }
 
+    /// <summary>最近一次失败的错误码与参数：界面按 code 翻译，LastError 只是中文兜底。</summary>
+    public ErrorInfo? LastErrorInfo { get; private set; }
+
     /// <summary>新数据包到达时触发（后台线程），UI 需自行切回 UI 线程。</summary>
     public event EventHandler? DataChanged;
 
@@ -167,6 +171,9 @@ public sealed class FanControlRuntime : IAsyncDisposable
     /// <summary>温度采样开始失败（上次成功/无错误）时触发，用于异常通知。</summary>
     public event EventHandler? TemperatureErrorOccurred;
 
+    /// <summary>配置被应用后触发（含 ATKACPI 自动回退），托盘与界面据此刷新语言/文案。</summary>
+    public event EventHandler? ConfigChanged;
+
     public async Task StartAsync()
     {
         await _appState.InitializeAsync();
@@ -180,9 +187,22 @@ public sealed class FanControlRuntime : IAsyncDisposable
         _communicationTask = Task.Run(() => RunCommunicationLoopAsync(_cts.Token));
     }
 
-    public Task ApplyConfigAsync(AppConfig config)
+    public async Task ApplyConfigAsync(AppConfig config)
     {
-        return _appState.ApplyAsync(config);
+        await _appState.ApplyAsync(config).ConfigureAwait(false);
+        RaiseConfigChanged();
+    }
+
+    private void RaiseConfigChanged()
+    {
+        try
+        {
+            ConfigChanged?.Invoke(this, EventArgs.Empty);
+        }
+        catch
+        {
+            // 订阅方（托盘/日志）异常不影响配置应用
+        }
     }
 
     /// <summary>读取系统配置（日志位置/开关/保留数量等）。</summary>
@@ -382,6 +402,7 @@ public sealed class FanControlRuntime : IAsyncDisposable
                     targetPwm ?? double.NaN));
 
                 LastError = null;
+                LastErrorInfo = null;
                 try
                 {
                     DataChanged?.Invoke(this, EventArgs.Empty);
@@ -399,6 +420,7 @@ public sealed class FanControlRuntime : IAsyncDisposable
             {
                 var firstError = LastError is null;
                 LastError = ex.Message;
+                LastErrorInfo = (ex as FanControlException)?.Error ?? ErrorInfo.Of("runtime.samplingFailed", ex.Message);
                 _logger.LogWarning(ex, "温度采样/控制计算失败（数据源 {Source}）。", _appState.Current.TemperatureSource);
 
                 if (firstError)
@@ -419,6 +441,7 @@ public sealed class FanControlRuntime : IAsyncDisposable
                         {
                             TemperatureSource = TemperatureSource.LibreHardwareMonitor,
                         });
+                    RaiseConfigChanged();
                 }
             }
 

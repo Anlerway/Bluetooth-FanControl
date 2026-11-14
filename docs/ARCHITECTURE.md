@@ -73,7 +73,8 @@ FanControl.Host.exe (管理员, 常驻)          FanControl.UI.exe (普通权限
 - 语言是配置项（`AppConfig.Language`，`zh-CN` / `en-US`），存在后台的配置文件里；**后台是唯一写盘方**，界面只是发 `{"cmd":"set","key":"language"}`。
 - 界面侧的字符串表在 `src/FanControl.UI.Cpp/src/i18n.cpp`：`kEntries[]` 以**中文原文为 key** 映射到英文，`fc::T(L"仪表盘")` 在英文模式下查表、中文模式下原样返回，漏翻只会显示中文，不会显示空串或 key。界面是立即模式：每次 `App::Paint()` 都按当前语言重新排版并重建命中区域，命中 id（如 `set:lang`、`chip:apply`）是固定字符串而不是显示文案，所以换语言后按钮不会失效。
 - 界面启动后收到的第一帧 `config` 会同步语言（`App::ApplyConfig`），所以换语言后重启界面仍是同一种。
-- 后台产生的文案（`ConfigPatch` 的校验错误、`FanControlRuntime` 的 `LastError`）目前只有中文——它们是数据，界面不改写；要双语需要后台把这类字符串改成错误码 + 参数。
+- 后台不拼用户文案，只给**错误码 + 参数**：`ErrorInfo(Code, Arg1, Arg2, Message)`（`src/FanControl.Shared/Contracts/ErrorInfo.cs`），provider 抛 `FanControlException(ErrorInfo)`；IPC 的 `error` 帧与 `state.errorCode` 带这三个字段，界面用 `fc::ErrorText(code, arg1, arg2, message)` 查 `kErrors[]` 拼当前语言，未登记的 code 退回 `message`。错误码表见 [PROTOCOL.md](PROTOCOL.md#错误码)。
+- 托盘属于后台进程，它的菜单与气泡文案在 `src/FanControl.Service/Tray/TrayStrings.cs`，由 `TrayStrings.SetLanguage` 跟随配置；`FanControlRuntime.ConfigChanged` 在配置变更后触发，`Program` 据此刷新托盘文案。
 
 ## 设备通信
 

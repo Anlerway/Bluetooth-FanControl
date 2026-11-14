@@ -1,4 +1,5 @@
 using System.Text.Json;
+using FanControl.Shared.Contracts;
 using FanControl.Shared.Enums;
 using FanControl.Shared.Models;
 
@@ -10,7 +11,7 @@ namespace FanControl.Host.Ipc;
 /// </summary>
 internal static class ConfigPatch
 {
-    public static bool TryApply(AppConfig current, string key, JsonElement value, out AppConfig updated, out string error)
+    public static bool TryApply(AppConfig current, string key, JsonElement value, out AppConfig updated, out ErrorInfo? error)
     {
         switch (key.Trim().ToLowerInvariant())
         {
@@ -62,18 +63,18 @@ internal static class ConfigPatch
                 return TryBool(current, value, flag => current with { SmoothingEnabled = flag }, out updated, out error);
             default:
                 updated = current;
-                error = "未知配置项：" + key;
+                error = ErrorInfo.Of("config.unknownKey", "未知配置项：" + key, key);
                 return false;
         }
     }
 
     /// <summary>温度-PWM 曲线：按温度升序、至少 2 个点，范围温度 0-120 / PWM 0-100。</summary>
-    public static bool TrySetCurve(AppConfig current, IReadOnlyList<(double Temperature, double Pwm)> points, out AppConfig updated, out string error)
+    public static bool TrySetCurve(AppConfig current, IReadOnlyList<(double Temperature, double Pwm)> points, out AppConfig updated, out ErrorInfo? error)
     {
         if (points.Count < 2)
         {
             updated = current;
-            error = "曲线至少需要 2 个点。";
+            error = ErrorInfo.Of("config.curveTooFew", "曲线至少需要 2 个点。");
             return false;
         }
 
@@ -87,22 +88,22 @@ internal static class ConfigPatch
         if (Math.Abs(normalized[normalized.Count - 1].PwmPercent - normalized[0].PwmPercent) < 0.01 && normalized.Count == 2)
         {
             updated = current;
-            error = "两端 PWM 不能相同。";
+            error = ErrorInfo.Of("config.curveFlat", "两端 PWM 不能相同。");
             return false;
         }
 
         updated = current with { Curve = normalized };
-        error = string.Empty;
+        error = null;
         return true;
     }
 
     /// <summary>转速-PWM 曲线：按转速升序、至少 2 个点。</summary>
-    public static bool TrySetRpmCurve(AppConfig current, IReadOnlyList<(double Rpm, double Pwm)> points, out AppConfig updated, out string error)
+    public static bool TrySetRpmCurve(AppConfig current, IReadOnlyList<(double Rpm, double Pwm)> points, out AppConfig updated, out ErrorInfo? error)
     {
         if (points.Count < 2)
         {
             updated = current;
-            error = "曲线至少需要 2 个点。";
+            error = ErrorInfo.Of("config.curveTooFew", "曲线至少需要 2 个点。");
             return false;
         }
 
@@ -114,85 +115,85 @@ internal static class ConfigPatch
             .ToList();
 
         updated = current with { RpmCurve = normalized };
-        error = string.Empty;
+        error = null;
         return true;
     }
 
-    private static bool TryEnum<T>(AppConfig current, JsonElement value, Func<T, AppConfig> apply, out AppConfig updated, out string error)
+    private static bool TryEnum<T>(AppConfig current, JsonElement value, Func<T, AppConfig> apply, out AppConfig updated, out ErrorInfo? error)
         where T : struct, Enum
     {
         if (value.ValueKind == JsonValueKind.String && Enum.TryParse<T>(value.GetString(), ignoreCase: true, out var parsed))
         {
             updated = apply(parsed);
-            error = string.Empty;
+            error = null;
             return true;
         }
 
         if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var number) && Enum.IsDefined(typeof(T), number))
         {
             updated = apply((T)Enum.ToObject(typeof(T), number));
-            error = string.Empty;
+            error = null;
             return true;
         }
 
         updated = current;
-        error = "取值无法解析为 " + typeof(T).Name + "。";
+        error = ErrorInfo.Of("config.enum", "取值无法解析为 " + typeof(T).Name + "。", typeof(T).Name);
         return false;
     }
 
-    private static bool TryString(AppConfig current, JsonElement value, Func<string, AppConfig> apply, out AppConfig updated, out string error)
+    private static bool TryString(AppConfig current, JsonElement value, Func<string, AppConfig> apply, out AppConfig updated, out ErrorInfo? error)
     {
         if (value.ValueKind != JsonValueKind.String)
         {
             updated = current;
-            error = "取值必须是字符串。";
+            error = ErrorInfo.Of("config.notString", "取值必须是字符串。");
             return false;
         }
 
         updated = apply(value.GetString() ?? string.Empty);
-        error = string.Empty;
+        error = null;
         return true;
     }
 
-    private static bool TryBool(AppConfig current, JsonElement value, Func<bool, AppConfig> apply, out AppConfig updated, out string error)
+    private static bool TryBool(AppConfig current, JsonElement value, Func<bool, AppConfig> apply, out AppConfig updated, out ErrorInfo? error)
     {
         if (value.ValueKind is not (JsonValueKind.True or JsonValueKind.False))
         {
             updated = current;
-            error = "取值必须是布尔值。";
+            error = ErrorInfo.Of("config.notBool", "取值必须是布尔值。");
             return false;
         }
 
         updated = apply(value.GetBoolean());
-        error = string.Empty;
+        error = null;
         return true;
     }
 
-    private static bool TryInt(AppConfig current, JsonElement value, int min, int max, Func<int, AppConfig> apply, out AppConfig updated, out string error)
+    private static bool TryInt(AppConfig current, JsonElement value, int min, int max, Func<int, AppConfig> apply, out AppConfig updated, out ErrorInfo? error)
     {
         if (value.ValueKind != JsonValueKind.Number || !value.TryGetInt32(out var number) || number < min || number > max)
         {
             updated = current;
-            error = "取值必须是 " + min + "-" + max + " 之间的整数。";
+            error = ErrorInfo.Of("config.rangeInt", "取值必须是 " + min + "-" + max + " 之间的整数。", min.ToString(), max.ToString());
             return false;
         }
 
         updated = apply(number);
-        error = string.Empty;
+        error = null;
         return true;
     }
 
-    private static bool TryDouble(AppConfig current, JsonElement value, double min, double max, Func<double, AppConfig> apply, out AppConfig updated, out string error)
+    private static bool TryDouble(AppConfig current, JsonElement value, double min, double max, Func<double, AppConfig> apply, out AppConfig updated, out ErrorInfo? error)
     {
         if (value.ValueKind != JsonValueKind.Number || !value.TryGetDouble(out var number) || number < min || number > max)
         {
             updated = current;
-            error = "取值必须是 " + min + "-" + max + " 之间的数值。";
+            error = ErrorInfo.Of("config.rangeNumber", "取值必须是 " + min + "-" + max + " 之间的数值。", min.ToString(), max.ToString());
             return false;
         }
 
         updated = apply(number);
-        error = string.Empty;
+        error = null;
         return true;
     }
 }

@@ -114,6 +114,10 @@ internal static class StateJson
         writer.WriteString("communicationType", config.CommunicationType.ToString());
         writer.WriteString("deviceName", DescribeDevice(config));
         writer.WriteString("lastError", runtime.LastError ?? string.Empty);
+        var error = runtime.LastErrorInfo;
+        writer.WriteString("errorCode", error?.Code ?? string.Empty);
+        writer.WriteString("errorArg1", error?.Arg1 ?? string.Empty);
+        writer.WriteString("errorArg2", error?.Arg2 ?? string.Empty);
         writer.WriteNumber("timestamp", packet?.Timestamp.ToUnixTimeMilliseconds() ?? 0);
         writer.WriteEndObject();
     }

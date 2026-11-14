@@ -136,7 +136,7 @@ internal sealed class IpcServer : IAsyncDisposable
         }
         catch (JsonException)
         {
-            await session.SendAsync(Error("请求不是合法 JSON。"), cancellationToken).ConfigureAwait(false);
+            await session.SendAsync(Error(ErrorInfo.Of("ipc.badJson", "请求不是合法 JSON。")), cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -184,7 +184,7 @@ internal sealed class IpcServer : IAsyncDisposable
                     break;
 
                 default:
-                    await session.SendAsync(Error("未知命令：" + (command ?? "(空)")), cancellationToken).ConfigureAwait(false);
+                    await session.SendAsync(Error(ErrorInfo.Of("ipc.unknownCommand", "未知命令：" + (command ?? "(空)"), command ?? "(空)")), cancellationToken).ConfigureAwait(false);
                     break;
             }
         }
@@ -194,13 +194,13 @@ internal sealed class IpcServer : IAsyncDisposable
     {
         if (!root.TryGetProperty("key", out var keyElement) || keyElement.ValueKind != JsonValueKind.String)
         {
-            await session.SendAsync(Error("缺少 key。"), cancellationToken).ConfigureAwait(false);
+            await session.SendAsync(Error(ErrorInfo.Of("ipc.missingKey", "缺少 key。")), cancellationToken).ConfigureAwait(false);
             return;
         }
 
         if (!root.TryGetProperty("value", out var valueElement))
         {
-            await session.SendAsync(Error("缺少 value。"), cancellationToken).ConfigureAwait(false);
+            await session.SendAsync(Error(ErrorInfo.Of("ipc.missingValue", "缺少 value。")), cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -218,7 +218,7 @@ internal sealed class IpcServer : IAsyncDisposable
     {
         if (!root.TryGetProperty("points", out var pointsElement) || pointsElement.ValueKind != JsonValueKind.Array)
         {
-            await session.SendAsync(Error("缺少 points 数组。"), cancellationToken).ConfigureAwait(false);
+            await session.SendAsync(Error(ErrorInfo.Of("ipc.missingPoints", "缺少 points 数组。")), cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -227,7 +227,7 @@ internal sealed class IpcServer : IAsyncDisposable
         {
             if (point.ValueKind != JsonValueKind.Array || point.GetArrayLength() < 2)
             {
-                await session.SendAsync(Error("曲线点必须是 [x, y] 数组。"), cancellationToken).ConfigureAwait(false);
+                await session.SendAsync(Error(ErrorInfo.Of("ipc.badPoint", "曲线点必须是 [x, y] 数组。")), cancellationToken).ConfigureAwait(false);
                 return;
             }
 
@@ -260,7 +260,7 @@ internal sealed class IpcServer : IAsyncDisposable
         catch (Exception ex)
         {
             _logger.LogError(ex, "应用配置失败。");
-            await session.SendAsync(Error("应用配置失败：" + ex.Message), cancellationToken).ConfigureAwait(false);
+            await session.SendAsync(Error(ErrorInfo.Of("config.applyFailed", "应用配置失败：" + ex.Message, ex.Message)), cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -307,7 +307,17 @@ internal sealed class IpcServer : IAsyncDisposable
 
     private static string Reply(object payload) => JsonSerializer.Serialize(payload, ReplyOptions);
 
-    private static string Error(string message) => Reply(new { @event = "error", message });
+    private static string Error(string message) => Error(ErrorInfo.Of("error.generic", message));
+
+    /// <summary>带错误码的错误帧：code/arg1/arg2 供界面翻译，message 是中文兜底。</summary>
+    private static string Error(ErrorInfo? info) => Reply(new
+    {
+        @event = "error",
+        code = info?.Code ?? "error.generic",
+        arg1 = info?.Arg1,
+        arg2 = info?.Arg2,
+        message = info?.Message ?? string.Empty,
+    });
 
     public async ValueTask DisposeAsync()
     {

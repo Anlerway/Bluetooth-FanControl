@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using FanControl.Shared.Contracts;
 
 namespace FanControl.Service.Tray;
 
@@ -19,7 +20,7 @@ public static class AutostartManager
 
     public static async Task EnableAsync()
     {
-        var exe = Environment.ProcessPath ?? throw new InvalidOperationException("无法获取进程路径。");
+        var exe = Environment.ProcessPath ?? throw new FanControlException(ErrorInfo.Of("autostart.noProcessPath", "无法获取进程路径。"));
         var arguments =
             $"/Create /TN \"{TaskName}\" " +
             $"/TR \"\\\"{exe}\\\" --autostart\" " +
@@ -28,7 +29,7 @@ public static class AutostartManager
         var exitCode = await RunSchTasksAsync(arguments);
         if (exitCode != 0)
         {
-            throw new InvalidOperationException($"创建自启任务失败（schtasks 退出码 {exitCode}）。");
+            throw new FanControlException(ErrorInfo.Of("autostart.taskFailed", $"创建自启任务失败（schtasks 退出码 {exitCode}）。", exitCode.ToString()));
         }
     }
 

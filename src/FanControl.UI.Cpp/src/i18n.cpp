@@ -118,4 +118,87 @@ const wchar_t* T(const wchar_t* zh) {
     return it == table.end() ? zh : it->second;
 }
 
+namespace {
+
+// 后台错误码表：code 由 FanControl.Host 给出，{0}/{1} 由 ErrorText 用参数替换。
+struct ErrEntry {
+    const wchar_t* code;
+    const wchar_t* zh;
+    const wchar_t* en;
+};
+
+constexpr ErrEntry kErrors[] = {
+    { L"config.unknownKey", L"未知配置项：{0}", L"Unknown setting: {0}" },
+    { L"config.curveTooFew", L"曲线至少需要 2 个点。", L"A curve needs at least two points." },
+    { L"config.curveFlat", L"两端 PWM 不能相同。", L"The two end PWM values must differ." },
+    { L"config.enum", L"取值无法解析为 {0}。", L"Cannot parse the value as {0}." },
+    { L"config.notString", L"取值必须是字符串。", L"The value must be a string." },
+    { L"config.notBool", L"取值必须是布尔值。", L"The value must be true or false." },
+    { L"config.rangeInt", L"取值必须是 {0}-{1} 之间的整数。", L"The value must be an integer between {0} and {1}." },
+    { L"config.rangeNumber", L"取值必须是 {0}-{1} 之间的数值。", L"The value must be a number between {0} and {1}." },
+    { L"config.applyFailed", L"应用配置失败：{0}", L"Failed to apply the settings: {0}" },
+    { L"ipc.badJson", L"请求不是合法 JSON。", L"The request is not valid JSON." },
+    { L"ipc.unknownCommand", L"未知命令：{0}", L"Unknown command: {0}" },
+    { L"ipc.missingKey", L"缺少 key。", L"Missing \"key\"." },
+    { L"ipc.missingValue", L"缺少 value。", L"Missing \"value\"." },
+    { L"ipc.missingPoints", L"缺少 points 数组。", L"Missing the \"points\" array." },
+    { L"ipc.badPoint", L"曲线点必须是 [x, y] 数组。", L"Each curve point must be an [x, y] array." },
+    { L"error.generic", L"操作失败。", L"The operation failed." },
+    { L"runtime.samplingFailed", L"采样失败：{0}", L"Sampling failed: {0}" },
+    { L"ble.notConfigured", L"未配置 BLE 设备，请在设置中选择设备。", L"No BLE device is configured. Pick one in Settings." },
+    { L"ble.deviceNotFound", L"未找到已配对的蓝牙设备：{0}", L"The paired Bluetooth device was not found: {0}" },
+    { L"ble.deviceNotFoundByMac", L"未找到已配对的蓝牙设备（MAC {0}），请在设置中刷新后重新选择。",
+      L"The paired Bluetooth device ({0}) was not found. Refresh the list in Settings and pick it again." },
+    { L"ble.nusServiceMissing", L"设备未提供 NUS 服务，请确认固件已启用 BLE 模式。",
+      L"The device does not expose the NUS service. Check that the firmware runs in BLE mode." },
+    { L"ble.nusServiceMissingFor", L"{0} 未提供 NUS 服务，请确认固件已启用 BLE 模式。",
+      L"{0} does not expose the NUS service. Check that the firmware runs in BLE mode." },
+    { L"ble.nusCharacteristicMissing", L"设备 NUS 特征不完整，请确认固件版本。",
+      L"The device's NUS characteristics are incomplete. Check the firmware version." },
+    { L"ble.notConnected", L"蓝牙未连接。", L"Bluetooth is not connected." },
+    { L"ble.timeout", L"蓝牙操作超时（{0} 秒）。", L"The Bluetooth operation timed out after {0}s." },
+    { L"ble.gattUnavailable", L"系统未提供 BLE GATT 接口，无法使用蓝牙通信。",
+      L"Windows does not expose the BLE GATT API, so Bluetooth cannot be used." },
+    { L"ble.openFailed", L"打开 BLE 设备失败（Win32 {0}）。", L"Failed to open the BLE device (Win32 {0})." },
+    { L"ble.writeFailed", L"蓝牙写入失败（HRESULT {0}）。", L"Bluetooth write failed (HRESULT {0})." },
+    { L"com.openTimeout", L"串口打开超时（{0}），设备可能未就绪。", L"Opening {0} timed out; the device may not be ready." },
+    { L"com.noHandshake", L"链路未就绪（{0} 握手无应答）。", L"The link is not ready (no handshake response on {0})." },
+    { L"com.notConnected", L"串口未连接。", L"The serial port is not connected." },
+    { L"curve.empty", L"曲线不能为空。", L"The curve cannot be empty." },
+    { L"curve.notIncreasing", L"曲线温度点必须严格递增。", L"Curve temperature points must increase strictly." },
+    { L"runtimeCurve.empty", L"转速曲线不能为空。", L"The RPM curve cannot be empty." },
+    { L"runtimeCurve.notIncreasing", L"转速曲线点必须严格递增。", L"RPM curve points must increase strictly." },
+    { L"autostart.noProcessPath", L"无法获取进程路径。", L"Cannot resolve the process path." },
+    { L"autostart.taskFailed", L"创建自启任务失败（schtasks 退出码 {0}）。",
+      L"Failed to create the startup task (schtasks exit code {0})." },
+};
+
+const std::unordered_map<std::wstring, const ErrEntry*>& ErrorTable() {
+    static const auto table = [] {
+        std::unordered_map<std::wstring, const ErrEntry*> map;
+        for (const auto& entry : kErrors) map.emplace(entry.code, &entry);
+        return map;
+    }();
+    return table;
+}
+
+void Substitute(std::wstring& text, const wchar_t* token, const std::wstring& value) {
+    const size_t length = wcslen(token);
+    for (size_t pos = text.find(token); pos != std::wstring::npos; pos = text.find(token, pos + value.size()))
+        text.replace(pos, length, value);
+}
+
+} // namespace
+
+std::wstring ErrorText(const std::wstring& code, const std::wstring& arg1, const std::wstring& arg2,
+                       const std::wstring& fallback) {
+    const auto& table = ErrorTable();
+    const auto it = table.find(code);
+    if (it == table.end()) return fallback;
+    std::wstring text = g_lang == Lang::En ? it->second->en : it->second->zh;
+    Substitute(text, L"{0}", arg1);
+    Substitute(text, L"{1}", arg2);
+    return text;
+}
+
 } // namespace fc

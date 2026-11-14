@@ -119,7 +119,7 @@ internal static class BluetoothLeInterop
     public static BleGattSession Open(string devicePath)
     {
         var api = Api.Value
-            ?? throw new InvalidOperationException("系统未提供 BLE GATT 接口（bluetoothleapis 导出缺失），无法使用蓝牙通信。");
+            ?? throw new FanControlException(ErrorInfo.Of("ble.gattUnavailable", "系统未提供 BLE GATT 接口（bluetoothleapis 导出缺失），无法使用蓝牙通信。"));
 
         var handle = CreateFileW(
             devicePath,
@@ -133,7 +133,9 @@ internal static class BluetoothLeInterop
         if (handle == InvalidHandleValue)
         {
             var error = Marshal.GetLastWin32Error();
-            throw new Win32Exception(error, "打开 BLE 设备失败（Win32 " + error + "）：" + devicePath);
+            throw new FanControlException(
+                ErrorInfo.Of("ble.openFailed", "打开 BLE 设备失败（Win32 " + error + "）：" + devicePath, error.ToString()),
+                new Win32Exception(error));
         }
 
         return new BleGattSession(handle, api);
@@ -399,7 +401,7 @@ internal sealed class BleGattSession : IDisposable
     {
         if (_serviceRaw is null)
         {
-            throw new InvalidOperationException("尚未定位 NUS 服务。");
+            throw new FanControlException(ErrorInfo.Of("ble.nusServiceMissing", "尚未定位 NUS 服务。"));
         }
 
         foreach (var characteristic in EnumerateCharacteristics(new GattServiceEntry(_serviceHandle, Guid.Empty, _serviceRaw)))
@@ -435,7 +437,7 @@ internal sealed class BleGattSession : IDisposable
             var hr = _api.SetCharacteristicValue(_handle, characteristicPtr, valuePtr, IntPtr.Zero, 0);
             if (hr < 0)
             {
-                throw new IOException("BLE 写入失败（HRESULT 0x" + hr.ToString("X8") + "）。");
+                throw new FanControlException(ErrorInfo.Of("ble.writeFailed", "BLE 写入失败（HRESULT 0x" + hr.ToString("X8") + "）。", "0x" + hr.ToString("X8")));
             }
         }
         finally

@@ -1,5 +1,6 @@
 using System.IO.Ports;
 using FanControl.Service.Config;
+using FanControl.Shared.Contracts;
 using FanControl.Shared.Enums;
 using Microsoft.Extensions.Logging;
 
@@ -65,7 +66,7 @@ public sealed class ComChannel : ICommunicationChannel
                 // 释放失败继续
             }
 
-            throw new InvalidOperationException($"串口打开超时（{config.ComPort}），设备可能未就绪。");
+            throw new FanControlException(ErrorInfo.Of("com.openTimeout", $"串口打开超时（{config.ComPort}），设备可能未就绪。", config.ComPort));
         }
 
         await openTask; // 若 Open 抛异常在此抛出
@@ -87,7 +88,7 @@ public sealed class ComChannel : ICommunicationChannel
                 "串口握手无应答（{Port}）：蓝牙链路未就绪，关闭端口稍后重试。",
                 config.ComPort);
             ClosePort();
-            throw new InvalidOperationException("蓝牙链路未就绪（握手无应答）。");
+            throw new FanControlException(ErrorInfo.Of("com.noHandshake", "蓝牙链路未就绪（握手无应答）。", config.ComPort));
         }
         catch (Exception ex)
         {
@@ -139,7 +140,7 @@ public sealed class ComChannel : ICommunicationChannel
         {
             if (_serialPort?.IsOpen != true)
             {
-                throw new InvalidOperationException("串口未连接。");
+                throw new FanControlException(ErrorInfo.Of("com.notConnected", "串口未连接。"));
             }
 
             var line = $"PWM:{command.PwmPercent:0.0}\r\n";
@@ -156,7 +157,7 @@ public sealed class ComChannel : ICommunicationChannel
         {
             if (_serialPort?.IsOpen != true)
             {
-                throw new InvalidOperationException("串口未连接。");
+                throw new FanControlException(ErrorInfo.Of("com.notConnected", "串口未连接。"));
             }
 
             var line = $"TIME:{time:yyyy/MM/dd HH:mm:ss}\r\n";
@@ -173,7 +174,7 @@ public sealed class ComChannel : ICommunicationChannel
         {
             if (_serialPort?.IsOpen != true)
             {
-                throw new InvalidOperationException("串口未连接。");
+                throw new FanControlException(ErrorInfo.Of("com.notConnected", "串口未连接。"));
             }
 
             var line = $"CPU{cpuCelsius:0.0}\r\n";

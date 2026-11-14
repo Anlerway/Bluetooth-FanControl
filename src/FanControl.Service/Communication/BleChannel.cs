@@ -49,7 +49,7 @@ public sealed class BleChannel : ICommunicationChannel
         var deviceName = config.BleDeviceName;
         if (string.IsNullOrWhiteSpace(targetMac) && string.IsNullOrWhiteSpace(deviceName))
         {
-            throw new InvalidOperationException("未配置 BLE 设备，请在设置中选择设备。");
+            throw new FanControlException(ErrorInfo.Of("ble.notConfigured", "未配置 BLE 设备，请在设置中选择设备。"));
         }
 
         var result = await WithTimeoutAsync(
@@ -130,9 +130,9 @@ public sealed class BleChannel : ICommunicationChannel
 
         if (target is null)
         {
-            throw new InvalidOperationException(string.IsNullOrWhiteSpace(targetMac)
-                ? $"未找到已配对的蓝牙设备：{deviceName}"
-                : $"未找到已配对的蓝牙设备（MAC {targetMac}），请在设置中刷新后重新选择。");
+            throw new FanControlException(string.IsNullOrWhiteSpace(targetMac)
+                ? ErrorInfo.Of("ble.deviceNotFound", $"未找到已配对的蓝牙设备：{deviceName}", deviceName)
+                : ErrorInfo.Of("ble.deviceNotFoundByMac", $"未找到已配对的蓝牙设备（MAC {targetMac}），请在设置中刷新后重新选择。", targetMac));
         }
 
         var displayName = !string.IsNullOrWhiteSpace(deviceName)
@@ -144,13 +144,13 @@ public sealed class BleChannel : ICommunicationChannel
         {
             if (session.FindService(NusService) is null)
             {
-                throw new InvalidOperationException($"{displayName} 未提供 NUS 服务，请确认固件已启用 BLE 模式。");
+                throw new FanControlException(ErrorInfo.Of("ble.nusServiceMissingFor", $"{displayName} 未提供 NUS 服务，请确认固件已启用 BLE 模式。", displayName));
             }
 
             var rx = session.FindCharacteristic(NusRx)
-                ?? throw new InvalidOperationException("设备 NUS 特征不完整，请确认固件版本。");
+                ?? throw new FanControlException(ErrorInfo.Of("ble.nusCharacteristicMissing", "设备 NUS 特征不完整，请确认固件版本。"));
             var tx = session.FindCharacteristic(NusTx)
-                ?? throw new InvalidOperationException("设备 NUS 特征不完整，请确认固件版本。");
+                ?? throw new FanControlException(ErrorInfo.Of("ble.nusCharacteristicMissing", "设备 NUS 特征不完整，请确认固件版本。"));
 
             // 通知内容本实现不使用；订阅失败只记警告，不因此断开（写入通道仍可用）
             if (!session.Subscribe(tx))
@@ -177,7 +177,7 @@ public sealed class BleChannel : ICommunicationChannel
             session = _session;
             if (!IsConnected || rx is null || session is null)
             {
-                throw new InvalidOperationException("BLE 未连接。");
+                throw new FanControlException(ErrorInfo.Of("ble.notConnected", "BLE 未连接。"));
             }
         }
 
@@ -248,7 +248,7 @@ public sealed class BleChannel : ICommunicationChannel
         var completed = await Task.WhenAny(task, Task.Delay(timeout, cancellationToken));
         if (completed != task)
         {
-            throw new InvalidOperationException($"BLE {operation}超时（{(int)timeout.TotalSeconds}s）。");
+            throw new FanControlException(ErrorInfo.Of("ble.timeout", $"BLE {operation}超时（{(int)timeout.TotalSeconds}s）。", ((int)timeout.TotalSeconds).ToString(), operation));
         }
 
         return await task;

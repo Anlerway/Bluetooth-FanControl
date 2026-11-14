@@ -79,7 +79,15 @@ internal static class Program
             exit: () => shutdown.Cancel(),
             reconnect: runtime.RequestReconnect);
 
+        TrayStrings.SetLanguage(runtime.CurrentConfig.Language);
         UpdateTray(tray, runtime);
+
+        // 界面或托盘切换语言都会落到配置里，配置变了就同步托盘文案。
+        runtime.ConfigChanged += (_, _) =>
+        {
+            TrayStrings.SetLanguage(runtime.CurrentConfig.Language);
+            UpdateTray(tray, runtime);
+        };
 
         runtime.ConnectionStateChanged += (_, _) => UpdateTray(tray, runtime);
         runtime.BleConnectionChanged += (_, connected) =>
@@ -87,14 +95,14 @@ internal static class Program
             UpdateTray(tray, runtime);
             if (!connected && runtime.CurrentConfig.NotifyOnBleDisconnect)
             {
-                tray.ShowNotification("风扇控制", "与风扇控制器的连接已断开，正在尝试重连。");
+                tray.ShowNotification(TrayStrings.AppTitle, TrayStrings.Disconnected);
             }
         };
         runtime.TemperatureErrorOccurred += (_, _) =>
         {
             if (runtime.CurrentConfig.NotifyOnTemperatureError)
             {
-                tray.ShowNotification("温度读取异常", runtime.LastError ?? "温度数据源暂时不可用。");
+                tray.ShowNotification(TrayStrings.TemperatureErrorTitle, runtime.LastError ?? TrayStrings.TemperatureErrorFallback);
             }
         };
 
@@ -135,12 +143,7 @@ internal static class Program
 
     private static void UpdateTray(TrayHost tray, FanControlRuntime runtime)
     {
-        var state = runtime.ConnectionState switch
-        {
-            CommunicationState.Connected => "已连接",
-            CommunicationState.Reconnecting => "重连中",
-            _ => "等待连接",
-        };
+        var state = TrayStrings.State(runtime.ConnectionState);
 
         var packet = runtime.LatestPacket;
         var suffix = packet is null

@@ -1,3 +1,4 @@
+using FanControl.Shared.Contracts;
 using FanControl.Shared.Models;
 
 namespace FanControl.Service.Fan;
@@ -14,14 +15,14 @@ public static class CurveInterpolator
 
         if (curve.Count == 0)
         {
-            throw new ArgumentException("曲线不能为空。", nameof(curve));
+            throw new FanControlException(ErrorInfo.Of("curve.empty", "曲线不能为空。"));
         }
 
         for (var i = 1; i < curve.Count; i++)
         {
             if (curve[i].TemperatureCelsius <= curve[i - 1].TemperatureCelsius)
             {
-                throw new ArgumentException("曲线温度点必须严格递增。", nameof(curve));
+                throw new FanControlException(ErrorInfo.Of("curve.notIncreasing", "曲线温度点必须严格递增。"));
             }
         }
 
@@ -68,14 +69,14 @@ public static class CurveInterpolator
 
         if (curve.Count == 0)
         {
-            throw new ArgumentException("转速曲线不能为空。", nameof(curve));
+            throw new FanControlException(ErrorInfo.Of("runtimeCurve.empty", "转速曲线不能为空。"));
         }
 
         for (var i = 1; i < curve.Count; i++)
         {
             if (curve[i].Rpm <= curve[i - 1].Rpm)
             {
-                throw new ArgumentException("转速曲线点必须严格递增。", nameof(curve));
+                throw new FanControlException(ErrorInfo.Of("runtimeCurve.notIncreasing", "转速曲线点必须严格递增。"));
             }
         }
 

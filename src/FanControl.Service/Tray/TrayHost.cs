@@ -259,9 +259,9 @@ internal sealed class TrayWindow
             return;
         }
 
-        Native.AppendMenuW(menu, Native.MfString, CmdOpen, "打开主界面");
+        Native.AppendMenuW(menu, Native.MfString, CmdOpen, TrayStrings.OpenUi);
         Native.AppendMenuW(menu, Native.MfSeparator, 0, null);
-        Native.AppendMenuW(menu, Native.MfString, CmdReconnect, "重建连接");
+        Native.AppendMenuW(menu, Native.MfString, CmdReconnect, TrayStrings.Reconnect);
         Native.AppendMenuW(menu, Native.MfSeparator, 0, null);
 
         var autostartFlags = Native.MfString;
@@ -270,9 +270,9 @@ internal sealed class TrayWindow
             autostartFlags |= Native.MfChecked;
         }
 
-        Native.AppendMenuW(menu, autostartFlags, CmdAutostart, "开机自启");
+        Native.AppendMenuW(menu, autostartFlags, CmdAutostart, TrayStrings.Autostart);
         Native.AppendMenuW(menu, Native.MfSeparator, 0, null);
-        Native.AppendMenuW(menu, Native.MfString, CmdExit, "退出");
+        Native.AppendMenuW(menu, Native.MfString, CmdExit, TrayStrings.Exit);
 
         // TrackPopupMenu 要求菜单所属窗口为前台，否则点空白处菜单不会消失
         Native.SetForegroundWindow(_hwnd);
@@ -442,7 +442,7 @@ internal sealed class TrayWindow
         }
         catch (Exception ex)
         {
-            Native.MessageBoxW(IntPtr.Zero, $"设置开机自启失败：{ex.Message}", "FanControl", Native.MbOk | Native.MbIconWarning);
+            Native.MessageBoxW(IntPtr.Zero, TrayStrings.AutostartFailed(ex.Message), "FanControl", Native.MbOk | Native.MbIconWarning);
         }
     }
 }

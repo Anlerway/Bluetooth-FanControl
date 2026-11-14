@@ -41,6 +41,9 @@ struct Snapshot {
     bool deviceConnected = true;
     std::wstring commMode = L"蓝牙 · LAPTOP-FAN";
     std::wstring lastError;
+    std::wstring errorCode;
+    std::wstring errorArg1;
+    std::wstring errorArg2;
 };
 
 enum class Page { Dashboard = 0, Settings, Curve, About };

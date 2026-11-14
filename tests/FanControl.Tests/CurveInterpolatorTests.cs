@@ -1,4 +1,5 @@
 using FanControl.Service.Fan;
+using FanControl.Shared.Contracts;
 using FanControl.Shared.Models;
 
 namespace FanControl.Tests;
@@ -61,8 +62,10 @@ public class CurveInterpolatorTests
     [Fact]
     public void Calculate_EmptyCurve_Throws()
     {
-        Assert.Throws<ArgumentException>(
+        var exception = Assert.Throws<FanControlException>(
             () => CurveInterpolator.Calculate(50, Array.Empty<CurvePoint>()));
+
+        Assert.Equal("curve.empty", exception.Error.Code);
     }
 
     [Fact]
@@ -71,8 +74,10 @@ public class CurveInterpolatorTests
         var unsorted = new List<CurvePoint> { new(70, 60), new(30, 20) };
         var duplicate = new List<CurvePoint> { new(30, 20), new(30, 30) };
 
-        Assert.Throws<ArgumentException>(() => CurveInterpolator.Calculate(50, unsorted));
-        Assert.Throws<ArgumentException>(() => CurveInterpolator.Calculate(50, duplicate));
+        Assert.Equal("curve.notIncreasing",
+            Assert.Throws<FanControlException>(() => CurveInterpolator.Calculate(50, unsorted)).Error.Code);
+        Assert.Equal("curve.notIncreasing",
+            Assert.Throws<FanControlException>(() => CurveInterpolator.Calculate(50, duplicate)).Error.Code);
     }
 
     [Theory]
@@ -92,8 +97,10 @@ public class CurveInterpolatorTests
     [Fact]
     public void CalculateRpm_EmptyCurve_Throws()
     {
-        Assert.Throws<ArgumentException>(
+        var exception = Assert.Throws<FanControlException>(
             () => CurveInterpolator.CalculateRpm(3000, Array.Empty<RpmCurvePoint>()));
+
+        Assert.Equal("runtimeCurve.empty", exception.Error.Code);
     }
 
     [Fact]
@@ -102,7 +109,9 @@ public class CurveInterpolatorTests
         var unsorted = new List<RpmCurvePoint> { new(4000, 45), new(0, 0) };
         var duplicate = new List<RpmCurvePoint> { new(2000, 20), new(2000, 30) };
 
-        Assert.Throws<ArgumentException>(() => CurveInterpolator.CalculateRpm(2000, unsorted));
-        Assert.Throws<ArgumentException>(() => CurveInterpolator.CalculateRpm(2000, duplicate));
+        Assert.Equal("runtimeCurve.notIncreasing",
+            Assert.Throws<FanControlException>(() => CurveInterpolator.CalculateRpm(2000, unsorted)).Error.Code);
+        Assert.Equal("runtimeCurve.notIncreasing",
+            Assert.Throws<FanControlException>(() => CurveInterpolator.CalculateRpm(2000, duplicate)).Error.Code);
     }
 }

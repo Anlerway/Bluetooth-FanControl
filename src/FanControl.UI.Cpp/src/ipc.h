@@ -51,6 +51,10 @@ struct State {
     std::wstring communicationType = L"Ble";
     std::wstring deviceName;
     std::wstring lastError;
+    // 错误码 + 参数：界面按 code 翻译，lastError 只是后台给的中文兜底
+    std::wstring errorCode;
+    std::wstring errorArg1;
+    std::wstring errorArg2;
     bool connected = false;
     long long timestamp = 0;
 };
@@ -62,6 +66,9 @@ struct Message {
     Config config;
     State state;
     std::wstring error;
+    std::wstring errorCode;
+    std::wstring errorArg1;
+    std::wstring errorArg2;
 };
 
 /// 与守护进程的命名管道客户端：一帧一个 JSON（4 字节小端长度前缀 + UTF-8）。

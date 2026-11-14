@@ -1,5 +1,6 @@
 using FanControl.Service.Communication;
 using FanControl.Service.Config;
+using FanControl.Shared.Contracts;
 using FanControl.Shared.Enums;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
@@ -48,8 +49,10 @@ public class CommunicationTests
         using var provider = BuildProvider();
         var channel = provider.GetRequiredService<ComChannel>();
 
-        await Assert.ThrowsAsync<InvalidOperationException>(
+        var exception = await Assert.ThrowsAsync<FanControlException>(
             () => channel.SendAsync(new PwmCommand(45)));
+
+        Assert.Equal("com.notConnected", exception.Error.Code);
     }
 
     [Fact]
@@ -60,7 +63,8 @@ public class CommunicationTests
             new ConfigManager(NullLogger<ConfigManager>.Instance, root, Path.Combine(root, "install")),
             NullLogger<BleChannel>.Instance);
 
-        var exception = await Assert.ThrowsAsync<InvalidOperationException>(() => channel.ConnectAsync());
+        var exception = await Assert.ThrowsAsync<FanControlException>(() => channel.ConnectAsync());
+        Assert.Equal("ble.notConfigured", exception.Error.Code);
         Assert.Contains("BLE 设备", exception.Message);
     }
 }
