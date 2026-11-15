@@ -1,18 +1,18 @@
 @echo off
-rem FanControl 原生安装器构建：产出 build\setup.exe 与 build\uninstall.exe（同源，按 exe 名分派）
-rem 用法: build.bat [版本号]   例如: build.bat 1.4.0
+rem FanControl native installer build: build\setup.exe + build\uninstall.exe (same sources, dispatch by exe name)
+rem usage: build.bat [version]   e.g. build.bat 2.0.0
 setlocal EnableExtensions
 cd /d "%~dp0"
 
 set "VERSION=%~1"
-if "%VERSION%"=="" set "VERSION=1.4.0"
+if "%VERSION%"=="" set "VERSION=2.0.0"
 for /f "tokens=1,2,3 delims=." %%a in ("%VERSION%") do (
   set "VMAJOR=%%a"
   set "VMINOR=%%b"
   set "VPATCH=%%c"
 )
-if not defined VMAJOR set "VMAJOR=1"
-if not defined VMINOR set "VMINOR=4"
+if not defined VMAJOR set "VMAJOR=2"
+if not defined VMINOR set "VMINOR=0"
 if not defined VPATCH set "VPATCH=0"
 
 where cl >nul 2>nul
@@ -41,11 +41,6 @@ copy /y "..\..\src\FanControl.UI.Cpp\app.ico" "build\app.ico" >nul 2>nul
   echo #define FC_VER_STRING "%VERSION%"
 ) > build\version.h
 
-rc /nologo /fo build\setup.res setup.rc
-if errorlevel 1 exit /b 1
-rc /nologo /fo build\uninstall.res uninstall.rc
-if errorlevel 1 exit /b 1
-
 cl /nologo /c /std:c++20 /EHsc /utf-8 /W4 /permissive- /O2 /MT ^
    /DUNICODE /D_UNICODE /DNOMINMAX /DWIN32_LEAN_AND_MEAN ^
    /Fo:build\ ^
@@ -54,11 +49,17 @@ cl /nologo /c /std:c++20 /EHsc /utf-8 /W4 /permissive- /O2 /MT ^
 if errorlevel 1 exit /b 1
 
 set "OBJS=build\main.obj build\app.obj build\ui.obj build\theme.obj build\i18n.obj build\payload.obj build\lzma2.obj build\sysutil.obj build\install.obj"
-set "LIBS=d2d1.lib dwrite.lib dwmapi.lib shlwapi.lib shell32.lib ole32.lib uuid.lib user32.lib gdi32.lib advapi32.lib version.lib"
+set "LIBS=d2d1.lib dwrite.lib windowscodecs.lib dwmapi.lib shlwapi.lib shell32.lib ole32.lib uuid.lib user32.lib gdi32.lib advapi32.lib version.lib"
 
-link /nologo /SUBSYSTEM:WINDOWS /OPT:REF /OPT:ICF /OUT:build\setup.exe %OBJS% build\setup.res %LIBS%
+rem uninstaller first: setup.rc embeds build\uninstall.exe as RCDATA
+rc /nologo /fo build\uninstall.res uninstall.rc
 if errorlevel 1 exit /b 1
 link /nologo /SUBSYSTEM:WINDOWS /OPT:REF /OPT:ICF /OUT:build\uninstall.exe %OBJS% build\uninstall.res %LIBS%
+if errorlevel 1 exit /b 1
+
+rc /nologo /fo build\setup.res setup.rc
+if errorlevel 1 exit /b 1
+link /nologo /SUBSYSTEM:WINDOWS /OPT:REF /OPT:ICF /OUT:build\setup.exe %OBJS% build\setup.res %LIBS%
 if errorlevel 1 exit /b 1
 
 echo [installer] build\setup.exe build\uninstall.exe

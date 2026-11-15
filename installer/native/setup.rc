@@ -1,9 +1,12 @@
-// 安装包资源：图标 + 版本信息 + 清单
-#include "build\version.h"
+// 安装包资源：图标 + 版本信息 + 清单（RC 会把 \a 之类当转义，路径里的反斜杠要写两次）
+#include "build\\version.h"
 
 #define FC_FILENAME "FanControl-Setup.exe"
 #define FC_DESCRIPTION "FanControl Setup"
 #include "version.inc"
 
-101 ICON "build\app.ico"
+101 ICON "build\\app.ico"
 1 24 "app.manifest"
+
+// Uninstaller payload: install.cpp writes it out at install time; uninstall registry points at it
+2001 RCDATA "build\\uninstall.exe"

@@ -1,8 +1,10 @@
 #include "install.h"
 
 #include <windows.h>
+#include <sddl.h>
 #include <winver.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -21,11 +23,13 @@ namespace {
 
 // ---------------- 产品常量 ----------------
 constexpr wchar_t kProductName[]    = L"FanControl";
+constexpr wchar_t kAppArgsAutostart[] = L"--autostart";
+constexpr wchar_t kPublisher[]      = L"Anlerway";
 constexpr wchar_t kAppExe[]         = L"FanControl.exe";
 constexpr wchar_t kUninstallExe[]   = L"uninstall.exe";
 constexpr wchar_t kShortcutName[]   = L"FanControl.lnk";
 constexpr wchar_t kTaskName[]       = L"FanControl";
-constexpr wchar_t kFallbackVersion[] = L"1.4.0";
+constexpr wchar_t kFallbackVersion[] = L"2.0.0";
 
 constexpr wchar_t kMetaKey[]      = L"SOFTWARE\\FanControl";
 constexpr wchar_t kUninstallKey[] = L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\FanControl";
@@ -69,6 +73,31 @@ bool SameText(const std::wstring& a, const std::wstring& b) {
 std::wstring TrimSeparator(std::wstring path) {
     while (!path.empty() && (path.back() == L'\\' || path.back() == L'/')) path.pop_back();
     return path;
+}
+
+// 安装过程的极简日志：排查"某一步没生效"（比如计划任务没建出来）时，让用户把这份文件发回来即可。
+// 位置：%ProgramData%\FanControl\setup.log；写失败就静默放弃，绝不因为日志打断安装。
+void SetupLog(const std::wstring& text) {
+    const std::wstring programData = ExpandEnv(L"%ProgramData%");
+    if (programData.empty()) return;
+    const std::wstring root = Join(programData, kProductName);
+    if (!EnsureDir(root)) return;
+    HANDLE file = CreateFileW(Join(root, L"setup.log").c_str(), FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
+                              nullptr, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (file == INVALID_HANDLE_VALUE) return;
+    SYSTEMTIME st{};
+    GetLocalTime(&st);
+    const std::wstring line = Format(L"%04d-%02d-%02d %02d:%02d:%02d  %s\r\n", static_cast<int>(st.wYear),
+                                     static_cast<int>(st.wMonth), static_cast<int>(st.wDay), static_cast<int>(st.wHour),
+                                     static_cast<int>(st.wMinute), static_cast<int>(st.wSecond), text.c_str());
+    const int bytes = WideCharToMultiByte(CP_UTF8, 0, line.c_str(), static_cast<int>(line.size()), nullptr, 0, nullptr, nullptr);
+    if (bytes > 0) {
+        std::string utf8(static_cast<size_t>(bytes), '\0');
+        WideCharToMultiByte(CP_UTF8, 0, line.c_str(), static_cast<int>(line.size()), utf8.data(), bytes, nullptr, nullptr);
+        DWORD written = 0;
+        WriteFile(file, utf8.data(), static_cast<DWORD>(utf8.size()), &written, nullptr);
+    }
+    CloseHandle(file);
 }
 
 bool PathEquals(const std::wstring& a, const std::wstring& b) {
@@ -240,16 +269,28 @@ std::wstring WriteInstallerConfig(DataMode mode, const std::wstring& dataRoot, c
 }
 
 // ---------------- 快捷方式 ----------------
-bool CreateInstallerShortcuts(const std::wstring& installDir, bool desktop) {
+// 按开关落盘：关掉的不但不建，还要删掉上一次安装留下的（升级时用户可能取消勾选）。
+bool CreateInstallerShortcuts(const std::wstring& installDir, bool desktop, bool startMenu) {
     const std::wstring target = Join(installDir, kAppExe);
     const std::wstring args;                 // 无启动参数
-    bool ok = CreateShortcut(Join(StartMenuDir(), kShortcutName), target, args, installDir, kProductName);
+    bool ok = true;
 
+    const std::wstring programs = StartMenuDir();
+    if (startMenu) {
+        if (!programs.empty()) {
+            ok = CreateShortcut(Join(programs, kShortcutName), target, args, installDir, kProductName) && ok;
+        }
+    } else if (!programs.empty()) {
+        DeleteFileIfExists(Join(programs, kShortcutName));
+    }
+
+    const std::wstring common = NormalizeDir(GetCommonDesktopDir());
     if (desktop) {
-        const std::wstring common = NormalizeDir(GetCommonDesktopDir());
         if (!common.empty()) {
             ok = CreateShortcut(Join(common, kShortcutName), target, args, installDir, kProductName) && ok;
         }
+    } else if (!common.empty()) {
+        DeleteFileIfExists(Join(common, kShortcutName));
     }
     return ok;
 }
@@ -297,7 +338,7 @@ bool WriteInstallerRegistry(const std::wstring& installDir, const std::wstring& 
     // 控制面板「应用和功能」条目
     ok = RegSetString(HKEY_LOCAL_MACHINE, kUninstallKey, L"DisplayName", kProductName) && ok;
     ok = RegSetString(HKEY_LOCAL_MACHINE, kUninstallKey, L"DisplayVersion", version) && ok;
-    ok = RegSetString(HKEY_LOCAL_MACHINE, kUninstallKey, L"Publisher", kProductName) && ok;
+    ok = RegSetString(HKEY_LOCAL_MACHINE, kUninstallKey, L"Publisher", kPublisher) && ok;
     ok = RegSetString(HKEY_LOCAL_MACHINE, kUninstallKey, L"DisplayIcon", exePath) && ok;
     ok = RegSetString(HKEY_LOCAL_MACHINE, kUninstallKey, L"InstallLocation", installDir) && ok;
     ok = RegSetString(HKEY_LOCAL_MACHINE, kUninstallKey, L"UninstallString", L"\"" + uninstaller + L"\"") && ok;
@@ -317,18 +358,196 @@ void CleanLegacyInstall(const std::wstring& installDir) {
 }
 
 // ---------------- 计划任务 ----------------
+std::wstring XmlEscape(const std::wstring& text) {
+    std::wstring out;
+    out.reserve(text.size() + 8);
+    for (const wchar_t ch : text) {
+        switch (ch) {
+        case L'&': out += L"&amp;"; break;
+        case L'<': out += L"&lt;"; break;
+        case L'>': out += L"&gt;"; break;
+        case L'"': out += L"&quot;"; break;
+        case L'\'': out += L"&apos;"; break;
+        default: out.push_back(ch); break;
+        }
+    }
+    return out;
+}
+
+// 任务的运行身份要写死成当前用户：schtasks /XML 不带 UserId 时，不同版本的 schtasks 注册出来的
+// 主体可能落到别处，表现出来就是"任务建了但登录时没跑"。这里直接用进程令牌里的 SID。
+std::wstring CurrentUserSid() {
+    HANDLE token = nullptr;
+    if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &token)) return std::wstring();
+    DWORD needed = 0;
+    (void)GetTokenInformation(token, TokenUser, nullptr, 0, &needed);
+    std::wstring sid;
+    if (needed > 0) {
+        std::vector<uint8_t> buffer(needed, 0);
+        if (GetTokenInformation(token, TokenUser, buffer.data(), needed, &needed)) {
+            const auto* user = reinterpret_cast<const TOKEN_USER*>(buffer.data());
+            wchar_t* text = nullptr;
+            if (ConvertSidToStringSidW(const_cast<PSID>(user->User.Sid), &text)) {
+                sid.assign(text);
+                LocalFree(text);
+            }
+        }
+    }
+    CloseHandle(token);
+    return sid;
+}
+
+// schtasks /Create 建出来的任务默认带 <DisallowStartIfOnBatteries>true</DisallowStartIfOnBatteries>，
+// 笔记本用电池登录时任务根本不启动——表现出来就是"开机自启没生效"。改成注册一整份任务 XML：
+// 关掉电池条件、补上工作目录、RunLevel=HighestAvailable。
+std::wstring AutostartTaskXml(const std::wstring& installDir) {
+    const std::wstring exe = XmlEscape(Join(installDir, kAppExe));
+    const std::wstring dir = XmlEscape(installDir);
+    std::wstring xml;
+    xml += L"<?xml version=\"1.0\" encoding=\"UTF-16\"?>\r\n";
+    xml += L"<Task version=\"1.2\" xmlns=\"http://schemas.microsoft.com/windows/2004/02/mit/task\">\r\n";
+    xml += L"  <RegistrationInfo>\r\n";
+    xml += L"    <Author>FanControl</Author>\r\n";
+    xml += L"    <Description>FanControl autostart</Description>\r\n";
+    xml += L"  </RegistrationInfo>\r\n";
+    xml += L"  <Triggers>\r\n";
+    xml += L"    <LogonTrigger>\r\n      <Enabled>true</Enabled>\r\n    </LogonTrigger>\r\n";
+    xml += L"  </Triggers>\r\n";
+    xml += L"  <Principals>\r\n";
+    xml += L"    <Principal id=\"Author\">\r\n";
+    const std::wstring sid = CurrentUserSid();
+    if (!sid.empty()) {
+        xml += L"      <UserId>";
+        xml += sid;
+        xml += L"</UserId>\r\n";
+    }
+    xml += L"      <LogonType>InteractiveToken</LogonType>\r\n";
+    xml += L"      <RunLevel>HighestAvailable</RunLevel>\r\n";
+    xml += L"    </Principal>\r\n";
+    xml += L"  </Principals>\r\n";
+    xml += L"  <Settings>\r\n";
+    xml += L"    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>\r\n";
+    xml += L"    <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>\r\n";
+    xml += L"    <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>\r\n";
+    xml += L"    <AllowHardTerminate>true</AllowHardTerminate>\r\n";
+    xml += L"    <StartWhenAvailable>true</StartWhenAvailable>\r\n";
+    xml += L"    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>\r\n";
+    xml += L"    <IdleSettings>\r\n";
+    xml += L"      <StopOnIdleEnd>false</StopOnIdleEnd>\r\n";
+    xml += L"      <RestartOnIdle>false</RestartOnIdle>\r\n";
+    xml += L"    </IdleSettings>\r\n";
+    xml += L"    <AllowStartOnDemand>true</AllowStartOnDemand>\r\n";
+    xml += L"    <Enabled>true</Enabled>\r\n";
+    xml += L"    <Hidden>false</Hidden>\r\n";
+    xml += L"    <RunOnlyIfIdle>false</RunOnlyIfIdle>\r\n";
+    xml += L"    <WakeToRun>false</WakeToRun>\r\n";
+    xml += L"    <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>\r\n";
+    xml += L"    <Priority>7</Priority>\r\n";
+    xml += L"  </Settings>\r\n";
+    xml += L"  <Actions Context=\"Author\">\r\n";
+    xml += L"    <Exec>\r\n";
+    xml += L"      <Command>";
+    xml += exe;
+    xml += L"</Command>\r\n";
+    xml += L"      <Arguments>--autostart</Arguments>\r\n";
+    xml += L"      <WorkingDirectory>";
+    xml += dir;
+    xml += L"</WorkingDirectory>\r\n";
+    xml += L"    </Exec>\r\n";
+    xml += L"  </Actions>\r\n";
+    xml += L"</Task>\r\n";
+    return xml;
+}
+
+bool WriteUtf16File(const std::wstring& path, const std::wstring& text) {
+    std::string bytes;
+    bytes.reserve(text.size() * 2 + 2);
+    bytes.push_back(static_cast<char>(0xFF));
+    bytes.push_back(static_cast<char>(0xFE));
+    for (const wchar_t ch : text) {
+        const unsigned int value = static_cast<unsigned int>(ch);
+        bytes.push_back(static_cast<char>(value & 0xFFu));
+        bytes.push_back(static_cast<char>((value >> 8) & 0xFFu));
+    }
+    return WriteAllBytes(path, bytes.data(), bytes.size());
+}
+
+// 任务自己的文件：%SystemRoot%\System32\Tasks\<任务名>。schtasks 建成功时它一定存在，
+// 内容是任务 XML（UTF-16）——用它核对"命令确实指向本次安装的 exe"，比只看退出码可靠。
+std::wstring TaskFilePath() {
+    wchar_t buffer[MAX_PATH] = {};
+    const UINT length = GetSystemDirectoryW(buffer, MAX_PATH);
+    if (length == 0 || length >= MAX_PATH) return std::wstring();
+    return Join(Join(buffer, L"Tasks"), kTaskName);
+}
+
+bool TaskFileMentions(const std::wstring& needle) {
+    std::vector<uint8_t> bytes;
+    if (needle.empty() || !ReadAllBytes(TaskFilePath(), &bytes) || bytes.empty()) return false;
+    std::vector<uint8_t> pattern;
+    pattern.reserve(needle.size() * 2);
+    for (const wchar_t ch : needle) {
+        pattern.push_back(static_cast<uint8_t>(ch & 0xFF));
+        pattern.push_back(static_cast<uint8_t>((static_cast<unsigned int>(ch) >> 8) & 0xFF));
+    }
+    return std::search(bytes.begin(), bytes.end(), pattern.begin(), pattern.end()) != bytes.end();
+}
+
+void DeleteAutostartTask();
+
+// 兜底的自启方式：写 HKCU\...\Run（不需要管理员，也不会被"电池供电"条件拦住）。
+bool CreateRunKeyAutostart(const std::wstring& exe) {
+    std::wstring value = L"\"";
+    value += exe;
+    value += L"\" ";
+    value += kAppArgsAutostart;
+    const bool ok = RegSetString(HKEY_CURRENT_USER, kRunKey, kProductName, value);
+    SetupLog(Format(L"autostart: HKCU Run fallback ok=%d", ok ? 1 : 0));
+    return ok;
+}
+
 bool CreateAutostartTask(const std::wstring& installDir) {
     const std::wstring exe = Join(installDir, kAppExe);
-    // /TR 的内层引号用 \" 转义：任务动作里要保留 "exe" --autostart 的原始形态
+    if (!FileExists(exe)) {
+        SetupLog(L"autostart: exe missing " + exe);
+        return false;
+    }
+
+    // 先清掉旧任务：上一版可能用 /TR 建（带"电池供电不启动"），也可能指向别的安装目录。
+    DeleteAutostartTask();
+
+    // 首选：整份任务 XML（电池条件可控、带工作目录、运行身份写死成当前用户）
+    const std::wstring xmlPath = Join(GetTempDir(), L"FanControl-autostart.xml");
+    bool ran = false;
+    DWORD exitCode = 1;
+    if (WriteUtf16File(xmlPath, AutostartTaskXml(installDir))) {
+        std::wstring cmd = L"schtasks.exe /Create /TN \"";
+        cmd += kTaskName;
+        cmd += L"\" /XML \"";
+        cmd += xmlPath;
+        cmd += L"\" /F";
+        ran = RunHidden(cmd, kTaskTimeoutMs, &exitCode);
+    } else {
+        SetupLog(L"autostart: write task xml failed " + xmlPath);
+    }
+    DeleteFileIfExists(xmlPath);
+    SetupLog(Format(L"autostart: schtasks /XML ran=%d exit=%lu taskFile=%d", ran ? 1 : 0, exitCode,
+                    FileExists(TaskFilePath()) ? 1 : 0));
+    if (ran && exitCode == 0 && TaskFileMentions(exe)) return true;
+
+    // 回退：老的 /TR 写法。能建出任务，但 schtasks 会给它加上"电池供电时不启动"，笔记本上可能不触发。
     std::wstring cmd = L"schtasks.exe /Create /TN \"";
     cmd += kTaskName;
     cmd += L"\" /TR \"\\\"";
     cmd += exe;
     cmd += L"\\\" --autostart\" /SC ONLOGON /RL HIGHEST /F";
 
-    DWORD exitCode = 1;
-    if (!RunHidden(cmd, kTaskTimeoutMs, &exitCode)) return false;
-    return exitCode == 0;
+    ran = false;
+    exitCode = 1;
+    ran = RunHidden(cmd, kTaskTimeoutMs, &exitCode);
+    SetupLog(Format(L"autostart: schtasks /TR ran=%d exit=%lu taskFile=%d", ran ? 1 : 0, exitCode,
+                    FileExists(TaskFilePath()) ? 1 : 0));
+    return ran && exitCode == 0 && TaskFileMentions(exe);
 }
 
 void DeleteAutostartTask() {
@@ -448,52 +667,22 @@ void RemoveUserData(const std::wstring& dataRoot, const std::wstring& installDir
 }
 
 // ---------------- 自删除 ----------------
-std::wstring CmdExePath() {
-    const std::wstring comspec = ExpandEnv(L"%ComSpec%");
-    if (!comspec.empty() && FileExists(comspec)) return comspec;
-
-    wchar_t buffer[MAX_PATH] = {};
-    const UINT length = GetSystemDirectoryW(buffer, MAX_PATH);
-    if (length > 0 && length < MAX_PATH) return Join(buffer, L"cmd.exe");
-    return std::wstring(L"cmd.exe");
-}
-
-std::wstring SelfDeleteCommandLine(const std::wstring& installDir, const std::wstring& selfPath) {
-    std::wstring cmd = CmdExePath();
-    cmd += L" /c ping -n 3 127.0.0.1 >nul & del /f /q \"";
-    cmd += selfPath;
-    cmd += L"\"";
-    const std::wstring dir = TrimSeparator(installDir);
-    if (!dir.empty()) {
-        cmd += L" & rmdir /s /q \"";
-        cmd += dir;
-        cmd += L"\"";
-    }
-    return cmd;
-}
-
-// 不等待子进程：卸载器自己马上就要退出，删除动作随后由 cmd 完成
-bool SpawnDetached(const std::wstring& cmdLine) {
-    if (cmdLine.empty()) return false;
-
-    std::vector<wchar_t> buffer(cmdLine.begin(), cmdLine.end());
-    buffer.push_back(L'\0');
-
-    STARTUPINFOW startup{};
-    startup.cb = sizeof(startup);
-    PROCESS_INFORMATION info{};
-    const BOOL created = CreateProcessW(nullptr, buffer.data(), nullptr, nullptr, FALSE,
-                                        CREATE_NO_WINDOW | DETACHED_PROCESS, nullptr, nullptr, &startup, &info);
-    if (!created) return false;
-    CloseHandle(info.hThread);
-    CloseHandle(info.hProcess);
-    return true;
-}
+// Windows 不允许删除正在运行的镜像：实测 POSIX 语义删除（FileDispositionInfoEx +
+// FILE_DISPOSITION_POSIX_SEMANTICS）返回 err=5，跨卷改名同样 err=5。主流安装器（Inno 的
+// _iu14D2N.tmp、NSIS 的 $TEMP\ns*.tmp\Au_.exe）都是"另起一个临时副本进程替我收尾"，这里照做：
+// 卸载器把自身复制到 %TEMP%，用 --cleanup 启动副本后立刻退出；副本等本进程结束后删掉
+// uninstall.exe、尝试删掉已经变空的安装目录，最后把副本自己登记成重启时删除。
+// 全程不用 cmd/ping 延时，不会弹出控制台窗口，也不依赖任何安装框架。
+constexpr wchar_t kCleanupSwitch[] = L"--cleanup";
+constexpr wchar_t kCleanupPrefix[] = L"FanControl-cleanup-";
 
 // ---------------- 多版本运行时 ----------------
-bool HasDesktopRuntime8In(const std::wstring& programFiles) {
+// 主程序是 net8.0-windows 但没有任何 WinForms/WPF 引用（托盘是裸 Shell_NotifyIcon），
+// 发布的 FanControl.runtimeconfig.json 里 framework 只写了 Microsoft.NETCore.App 8.0.0，
+// 所以精简版负载只需要基础的 .NET 运行时就够，不必要求 Windows Desktop Runtime。
+bool HasRuntime8In(const std::wstring& programFiles) {
     if (programFiles.empty()) return false;
-    const std::wstring root = Join(Join(Join(programFiles, L"dotnet"), L"shared"), L"Microsoft.WindowsDesktop.App");
+    const std::wstring root = Join(Join(Join(programFiles, L"dotnet"), L"shared"), L"Microsoft.NETCore.App");
     WIN32_FIND_DATAW data{};
     HANDLE find = FindFirstFileW(Join(root, L"8.*").c_str(), &data);
     if (find == INVALID_HANDLE_VALUE) return false;
@@ -511,6 +700,108 @@ bool HasDesktopRuntime8In(const std::wstring& programFiles) {
 }  // namespace
 
 // ---------------- 公共接口 ----------------
+namespace {
+// 启动副本进程：不显示窗口，并优先脱离宿主的作业对象（否则父进程一退出副本就被连带杀掉）。
+bool SpawnHidden(const std::wstring& exePath, const std::wstring& args) {
+    std::wstring commandLine = L"\"";
+    commandLine += exePath;
+    commandLine += L"\" ";
+    commandLine += args;
+    std::vector<wchar_t> buffer(commandLine.begin(), commandLine.end());
+    buffer.push_back(L'\0');
+
+    STARTUPINFOW startup{};
+    startup.cb = sizeof(startup);
+    PROCESS_INFORMATION info{};
+    BOOL created = CreateProcessW(exePath.c_str(), buffer.data(), nullptr, nullptr, FALSE,
+                                  CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB, nullptr, nullptr, &startup, &info);
+    if (!created) {
+        startup = STARTUPINFOW{};
+        startup.cb = sizeof(startup);
+        info = PROCESS_INFORMATION{};
+        created = CreateProcessW(exePath.c_str(), buffer.data(), nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr,
+                                 nullptr, &startup, &info);
+    }
+    if (!created) return false;
+    CloseHandle(info.hThread);
+    CloseHandle(info.hProcess);
+    return true;
+}
+}  // namespace
+
+bool StartSelfCleanup(const std::wstring& installDir, const std::wstring& selfPath) {
+    if (selfPath.empty() || !FileExists(selfPath)) return false;
+
+    const std::wstring temp = GetTempDir();
+    if (temp.empty()) return false;
+    const std::wstring copy =
+        Join(temp, std::wstring(kCleanupPrefix) + std::to_wstring(GetCurrentProcessId()) + L".exe");
+    DeleteFileIfExists(copy);
+    if (!CopyFileW(selfPath.c_str(), copy.c_str(), FALSE)) {
+        SetupLog(L"cleanup: copy failed " + copy);
+        return false;
+    }
+
+    std::wstring args = kCleanupSwitch;
+    args += L" \"";
+    args += TrimSeparator(installDir);
+    args += L"\" \"";
+    args += selfPath;
+    args += L"\" ";
+    args += std::to_wstring(GetCurrentProcessId());
+    if (!SpawnHidden(copy, args)) {
+        SetupLog(L"cleanup: spawn failed " + copy);
+        DeleteFileIfExists(copy);
+        return false;
+    }
+    SetupLog(L"cleanup: worker started " + copy);
+    return true;
+}
+
+int RunCleanupWorker(const std::wstring& installDir, const std::wstring& selfPath, unsigned long parentPid) {
+    if (parentPid != 0) {
+        // 父卸载器停在"卸载完成"页面上可能有一会儿，这里给足 10 分钟：副本没有任何界面，
+        // 多等一会儿用户也感觉不到，但换来的是"关掉完成页就一定删干净"。
+        HANDLE parent = OpenProcess(SYNCHRONIZE, FALSE, parentPid);
+        if (parent != nullptr) {
+            WaitForSingleObject(parent, 600000);
+            CloseHandle(parent);
+        }
+    }
+
+    // 原卸载器退出后它的镜像才解锁；给杀软/文件索引一点时间，重试 40 次 × 250ms。
+    bool removed = false;
+    for (int attempt = 0; attempt < 40 && !removed; ++attempt) {
+        DeleteFileIfExists(selfPath);
+        removed = !FileExists(selfPath);
+        if (!removed) Sleep(250);
+    }
+
+    const std::wstring dir = TrimSeparator(installDir);
+    if (removed && !dir.empty()) {
+        // 只有目录已经空了才删得掉：用户自己放进去的文件不会被连带清掉。
+        (void)RemoveDirectoryW(dir.c_str());
+    }
+
+    // 副本藏在 %TEMP%：先试着直接删（此刻自己还锁着，通常失败），删不掉就登记到重启时删除。
+    const std::wstring selfCopy = GetModulePath();
+    if (!selfCopy.empty()) {
+        DeleteFileIfExists(selfCopy);
+        if (FileExists(selfCopy)) (void)MoveFileExW(selfCopy.c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT);
+    }
+    return removed ? 0 : 1;
+}
+bool AutostartEnabled() {
+    std::wstring cmd = L"schtasks.exe /Query /TN \"";
+    cmd += kTaskName;
+    cmd += L"\"";
+    DWORD exitCode = 1;
+    if (RunHidden(cmd, kTaskTimeoutMs, &exitCode) && exitCode == 0) return true;
+    // 兜底写在 HKCU\...\Run 里的同名值也算开启（升级时恢复界面开关用）
+    std::wstring value;
+    return RegGetString(HKEY_CURRENT_USER, kRunKey, kProductName, &value) && !value.empty();
+}
+
 std::wstring DefaultInstallDir() {
     std::wstring programFiles = NormalizeDir(GetProgramFiles());
     if (programFiles.empty()) programFiles = L"C:\\Program Files";
@@ -553,8 +844,8 @@ bool HasExistingConfig(const std::wstring& installDir, const std::wstring& dataR
     return false;
 }
 
-bool HasDesktopRuntime8() {
-    return HasDesktopRuntime8In(GetProgramFiles()) || HasDesktopRuntime8In(GetProgramFilesX86());
+bool HasDotnetRuntime8() {
+    return HasRuntime8In(GetProgramFiles()) || HasRuntime8In(GetProgramFilesX86());
 }
 
 bool PayloadAvailable(const std::wstring& exePath) {
@@ -589,6 +880,23 @@ void ForgetInstallInfo() {
     RegDeleteTree(HKEY_LOCAL_MACHINE, kUninstallKey);
 }
 
+// 安装包里嵌着卸载器（setup.rc 的 RCDATA），安装时原样写进安装目录
+#ifndef FC_IDR_UNINSTALL_EXE
+#define FC_IDR_UNINSTALL_EXE 2001
+#endif
+
+bool WriteBundledUninstaller(const std::wstring& installDir) {
+    HRSRC res = FindResourceW(nullptr, MAKEINTRESOURCEW(FC_IDR_UNINSTALL_EXE), RT_RCDATA);
+    if (res == nullptr) return false;
+    HGLOBAL block = LoadResource(nullptr, res);
+    const DWORD size = SizeofResource(nullptr, res);
+    const void* bytes = (block != nullptr) ? LockResource(block) : nullptr;
+    if (bytes == nullptr || size == 0) return false;
+    const std::wstring target = Join(installDir, kUninstallExe);
+    DeleteFileIfExists(target);
+    return WriteAllBytes(target, bytes, static_cast<size_t>(size));
+}
+
 std::wstring RunInstall(const InstallRequest& req, ProgressFn progress, void* user) {
     SetUiLanguage(req.chinese);
     const Progress report{progress, user};
@@ -598,10 +906,7 @@ std::wstring RunInstall(const InstallRequest& req, ProgressFn progress, void* us
     const std::wstring customDir =
         req.dataMode == DataMode::Custom ? NormalizeDir(req.customDir) : std::wstring();
     const std::wstring dataRoot = ResolveDataRoot(req.dataMode, installDir, customDir);
-    // 首启判定要在写配置之前取（升级安装不该再弹向导，也不该自动启动）
-    const bool hadConfig = HasExistingConfig(installDir, dataRoot);
-
-    const std::wstring packagePath = req.exePath.empty() ? GetModulePath() : NormalizeDir(req.exePath);
+    const std::wstring packagePath = req.exePath.empty() ? GetModulePath() : req.exePath;
 
     // 1) 定位负载
     report(0, T(Str::StepPreparing));
@@ -641,6 +946,9 @@ std::wstring RunInstall(const InstallRequest& req, ProgressFn progress, void* us
         return Format(T(Str::ErrExtract), detail.c_str());
     }
 
+    // 4b) 卸载器：控制面板「卸载」指向它
+    if (!WriteBundledUninstaller(installDir)) return std::wstring(T(Str::ErrUninstaller));
+
     // 5) 配置（与主程序 ConfigManager 同布局）
     report(72, T(Str::StepConfig));
     const std::wstring configError = WriteInstallerConfig(req.dataMode, dataRoot, customDir, req.chinese);
@@ -648,12 +956,17 @@ std::wstring RunInstall(const InstallRequest& req, ProgressFn progress, void* us
 
     // 6) 快捷方式
     report(80, T(Str::StepShortcuts));
-    if (!CreateInstallerShortcuts(installDir, req.desktopShortcut)) return std::wstring(T(Str::ErrShortcut));
+    if (!CreateInstallerShortcuts(installDir, req.desktopShortcut, req.startMenuShortcut)) {
+        return std::wstring(T(Str::ErrShortcut));
+    }
 
-    // 7) 开机自启
+    // 7) 开机自启：计划任务是主路；组策略/权限把任务建不出来时退到 HKCU\...\Run，
+    //    至少保证"登录后自动启动"这件事真的发生（Run 项不带提权，但主程序自己会再自提权）。
     report(86, T(Str::StepAutostart));
     if (req.autostart) {
-        if (!CreateAutostartTask(installDir)) return std::wstring(T(Str::ErrAutostart));
+        if (!CreateAutostartTask(installDir) && !CreateRunKeyAutostart(Join(installDir, kAppExe))) {
+            return std::wstring(T(Str::ErrAutostart));
+        }
     } else {
         DeleteAutostartTask();
     }
@@ -665,9 +978,8 @@ std::wstring RunInstall(const InstallRequest& req, ProgressFn progress, void* us
     }
     CleanLegacyInstall(installDir);
 
-    // 9) 完成页由 UI 处理
-    report(96, T(Str::StepLaunch));
-    if (req.launchAfter && !hadConfig) (void)ShellOpen(Join(installDir, kAppExe));
+    // 9) 主程序由完成页的「完成」按钮启动（勾选了"安装完成后启动"时），引擎不抢先开。
+    report(96, T(Str::StepFinalize));
 
     report(100, L"");
     return std::wstring();
@@ -718,9 +1030,12 @@ std::wstring RunUninstall(const UninstallRequest& req, ProgressFn progress, void
         RemoveUserData(dataRoot, installDir);
     }
 
-    // 7) 自删除并由 UI 退出进程
+    // 7) 收尾：Windows 删不掉正在运行的 exe，交给 %TEMP% 里的副本进程删自己、删空的安装目录。
     report(92, T(Str::StepFinalize));
-    SpawnDetached(SelfDeleteCommandLine(installDir, selfPath));
+    if (!StartSelfCleanup(installDir, selfPath)) {
+        // 副本都起不来时兜底：至少把自身登记成重启删除，别留下永远删不掉的残留。
+        (void)MoveFileExW(selfPath.c_str(), nullptr, MOVEFILE_DELAY_UNTIL_REBOOT);
+    }
     return std::wstring();
 }
 

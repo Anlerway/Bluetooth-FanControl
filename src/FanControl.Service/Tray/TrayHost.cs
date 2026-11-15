@@ -83,9 +83,12 @@ internal sealed class TrayWindow
     private IntPtr _icon;
     private string _tip = "FanControl";
     private (string Title, string Text, ErrorSeverity Severity)? _pendingNotification;
+    private static readonly IntPtr IconRetryTimerId = new(1);
+
     private bool _autostartEnabled;
     private bool _iconAdded;
     private bool _shutdownRequested;
+    private int _iconRetries;
 
     public TrayWindow(Action showUi, Action exit, Action? reconnect)
     {
@@ -102,6 +105,7 @@ internal sealed class TrayWindow
         }
 
         s_instance = this;
+        AutostartManager.StateChanged += OnAutostartStateChanged;
         AddIcon();
         RefreshAutostartState();
 
@@ -111,6 +115,7 @@ internal sealed class TrayWindow
             Native.DispatchMessageW(ref msg);
         }
 
+        AutostartManager.StateChanged -= OnAutostartStateChanged;
         RemoveIcon();
         if (_hwnd != IntPtr.Zero)
         {
@@ -219,7 +224,18 @@ internal sealed class TrayWindow
         if (message == _taskbarCreatedMessage)
         {
             _iconAdded = false;
+            _iconRetries = 0;
             AddIcon();
+            return IntPtr.Zero;
+        }
+
+        if (message == Native.WmTimer)
+        {
+            if (wParam == IconRetryTimerId)
+            {
+                AddIcon();
+            }
+
             return IntPtr.Zero;
         }
 
@@ -327,9 +343,18 @@ internal sealed class TrayWindow
 
         if (!Native.ShellNotifyIcon(Native.NimAdd, ref data))
         {
+            // 登录自启时资源管理器任务栏可能还没建好，Shell_NotifyIcon 直接返回 FALSE。
+            // 每 2 秒重试一次，最多 20 次（约 40 秒），避免"开机自启后托盘里没有图标"。
+            if (_iconRetries++ < 20 && _hwnd != IntPtr.Zero)
+            {
+                Native.SetTimer(_hwnd, IconRetryTimerId, 2000, IntPtr.Zero);
+            }
+
             return;
         }
 
+        _iconRetries = 0;
+        Native.KillTimer(_hwnd, IconRetryTimerId);
         _iconAdded = true;
     }
 
@@ -429,6 +454,12 @@ internal sealed class TrayWindow
         return Native.LoadIconW(IntPtr.Zero, Native.IdiApplication);
     }
 
+    /// <summary>托盘菜单切换自启后由 AutostartManager 广播，菜单勾选状态跟着变。</summary>
+    private void OnAutostartStateChanged(bool enabled)
+    {
+        _autostartEnabled = enabled;
+    }
+
     private void RefreshAutostartState()
     {
         _ = Task.Run(async () =>
@@ -472,6 +503,7 @@ internal static class Native
     public const int WmApp = 0x8000;
     public const int WmClose = 0x0010;
     public const int WmNull = 0x0000;
+    public const int WmTimer = 0x0113;
     public const int WmLButtonUp = 0x0202;
     public const int WmLButtonDblClk = 0x0203;
     public const int WmRButtonUp = 0x0205;
@@ -499,6 +531,12 @@ internal static class Native
     public static readonly IntPtr IdiApplication = new(32512);
 
     public delegate IntPtr WndProc(IntPtr hWnd, uint message, IntPtr wParam, IntPtr lParam);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern IntPtr SetTimer(IntPtr hWnd, IntPtr nIDEvent, uint uElapse, IntPtr lpTimerFunc);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern bool KillTimer(IntPtr hWnd, IntPtr uIDEvent);
 
     [StructLayout(LayoutKind.Sequential)]
     public struct Point

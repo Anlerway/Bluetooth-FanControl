@@ -1,4 +1,4 @@
-﻿<#
+<#
 FanControl release packaging (single-process FanControl.exe + in-process FanControl.UI.dll)
 -------------------------------------------------------------------------------
 Artifacts (names from package-names.txt, UTF-8, {0} = version):
@@ -10,12 +10,12 @@ Usage:
   powershell -NoProfile -ExecutionPolicy Bypass -File installer\_build-release.ps1
 
 Flow: build the C++ UI DLL -> dotnet publish the host (two flavors, output is FanControl.exe)
--> copy the UI DLL into each publish folder -> zip both -> compile ONE Inno Setup package that
-carries both payloads; the .NET 8 desktop runtime check picks the default at install time.
+-> copy the UI DLL into each publish folder -> zip both -> build the native installer
+(installer\native\build.bat) -> append both payloads with installer\pack.py (raw LZMA2).
 #>
 
 param(
-    [string]$Version = '1.4.0',
+    [string]$Version = '2.0.0',
     [string]$Configuration = 'Release',
     [string]$RuntimeIdentifier = 'win-x64',
     [string]$HostProject = "$PSScriptRoot\..\src\FanControl.Host\FanControl.Host.csproj",
@@ -24,7 +24,8 @@ param(
     [string]$ReleaseRoot = "$PSScriptRoot\..\..\artifacts\release",
     [string]$InstallerRoot = "$PSScriptRoot\..\..\artifacts\installer",
     [string]$NamesFile = "$PSScriptRoot\package-names.txt",
-    [string]$Iscc = 'D:\APP\Inno Setup 6\ISCC.exe'
+    # pack.py only needs the standard library; empty = take python from PATH
+    [string]$Python = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -125,19 +126,32 @@ function New-ZipPackage {
     Write-Host ("   ok: {0} MB" -f $size)
 }
 
-function Invoke-Iscc {
-    param(
-        [string]$Compiler,
-        [string]$Script,
-        [string]$FullSource,
-        [string]$SlimSource,
-        [string]$Name,
-        [string]$OutDir
-    )
+function Invoke-NativeSetup {
+    param([string]$FullDir, [string]$SlimDir, [string]$Name, [string]$OutDir)
 
-    Write-Host "`n-- installer [$Name] (full + slim payload in one package)" -ForegroundColor Yellow
-    & $Compiler $Script "/DAppVersion=$script:Version" "/DFullSource=$FullSource" "/DSlimSource=$SlimSource" "/DOutputName=$Name" "/DOutputDir=$OutDir" | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed: $Name (exit $LASTEXITCODE)" }
+    $nativeDir = Join-Path $script:PSScriptRoot 'native'
+    $bat = Join-Path $nativeDir 'build.bat'
+    if (-not (Test-Path $bat)) { throw "build.bat not found: $bat" }
+    $packer = Join-Path $script:PSScriptRoot 'pack.py'
+    if (-not (Test-Path $packer)) { throw "pack.py not found: $packer" }
+
+    Write-Host "`n-- native installer (setup.exe + uninstall.exe)" -ForegroundColor Yellow
+    $cmd = 'cd /d "' + $nativeDir + '" && build.bat ' + $script:Version
+    & cmd.exe /c $cmd
+    if ($LASTEXITCODE -ne 0) { throw "native installer build failed (exit $LASTEXITCODE)" }
+
+    $setupExe = Join-Path $nativeDir 'build\setup.exe'
+    if (-not (Test-Path $setupExe)) { throw "setup.exe missing: $setupExe" }
+
+    $python = $script:Python
+    if (-not $python) { $python = (Get-Command python -ErrorAction SilentlyContinue).Source }
+    if (-not $python) { throw "python not found: pass -Python <python.exe> (standard library only)" }
+
+    if (-not (Test-Path $OutDir)) { New-Item -ItemType Directory -Path $OutDir | Out-Null }
+    $outExe = Join-Path $OutDir ($Name + '.exe')
+    Write-Host "`n-- payloads (raw LZMA2) -> $outExe" -ForegroundColor Yellow
+    & $python $packer --exe $setupExe --out $outExe --payload "full=$FullDir" --payload "slim=$SlimDir"
+    if ($LASTEXITCODE -ne 0) { throw "payload packing failed (exit $LASTEXITCODE)" }
 }
 
 # --- main -----------------------------------------------------------------------
@@ -152,11 +166,7 @@ Invoke-Publish -Name 'framework-dependent (.NET 8 required)' -OutDir $frameworkD
 New-ZipPackage -SourceDir $selfContainedDir -ZipPath (Join-Path $ReleaseRoot $packageNames['zip-selfcontained'])
 New-ZipPackage -SourceDir $frameworkDir -ZipPath (Join-Path $ReleaseRoot $packageNames['zip-framework'])
 
-if (-not (Test-Path $Iscc)) { throw "Inno Setup compiler not found: $Iscc" }
-if (-not (Test-Path $InstallerRoot)) { New-Item -ItemType Directory -Path $InstallerRoot | Out-Null }
-
-$iss = Join-Path $PSScriptRoot 'installer.iss'
-Invoke-Iscc -Compiler $Iscc -Script $iss -FullSource $selfContainedDir -SlimSource $frameworkDir -Name $packageNames['setup'] -OutDir $InstallerRoot
+Invoke-NativeSetup -FullDir $selfContainedDir -SlimDir $frameworkDir -Name $packageNames['setup'] -OutDir $InstallerRoot
 
 Write-Host "`n== artifacts ==" -ForegroundColor Cyan
 foreach ($zip in @($packageNames['zip-selfcontained'], $packageNames['zip-framework'])) {

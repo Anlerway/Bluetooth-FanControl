@@ -10,7 +10,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <ApplicationManifest>app.manifest</ApplicationManifest>
-    <Version>1.4.0</Version>
+    <Version>2.0.0</Version>
     <!-- 与界面 DLL 共用同一个图标：exe 有了它，资源管理器、任务栏、开始菜单、托盘
          （TrayHost 用 ExtractIconExW 取 exe 图标）才不用系统默认图标。 -->
     <ApplicationIcon>..\FanControl.UI.Cpp\app.ico</ApplicationIcon>
@@ -25,6 +25,16 @@
   <ItemGroup Condition="Exists('$(NativeUiDll)')">
     <None Include="$(NativeUiDll)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Visible="false" />
     <None Include="$(MSBuildThisFileDirectory)..\FanControl.UI.Cpp\build\FanControl.UI.lib" CopyToOutputDirectory="PreserveNewest" Visible="false" Condition="Exists('$(MSBuildThisFileDirectory)..\FanControl.UI.Cpp\build\FanControl.UI.lib')" />
+  </ItemGroup>
+
+  <!-- C++/WinRT 蓝牙桥：由 src/FanControl.Ble.Native/build.bat 产出；有就拷到输出目录。
+       用原生桥而不是 C# WinRT 投影，是为了省掉 24 MB 的 Microsoft.Windows.SDK.NET.dll。 -->
+  <PropertyGroup>
+    <NativeBleDll>$(MSBuildThisFileDirectory)..\FanControl.Ble.Native\build\FanControl.Ble.dll</NativeBleDll>
+  </PropertyGroup>
+
+  <ItemGroup Condition="Exists('$(NativeBleDll)')">
+    <None Include="$(NativeBleDll)" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Visible="false" />
   </ItemGroup>
 
   <!-- 常驻小工具：让 GC 更积极地归还内存（服务器 GC 关闭 + 内存压力时收缩堆），

@@ -99,8 +99,9 @@ FanControl.slnx
 │   ├── FanControl.Shared/    # Shared contracts: enums / models / error codes
 │   ├── FanControl.Service/   # Library: sampling loop, hardware sources, communication, config, logging, tray
 │   ├── FanControl.Host/      # Single-process host (C#, builds FanControl.exe: tray + sampling + UI bridge)
-│   └── FanControl.UI.Cpp/    # UI (C++20, Direct2D custom drawing, builds FanControl.UI.dll)
-├── installer/                # Inno Setup script and one-shot packaging script
+│   ├── FanControl.UI.Cpp/    # UI (C++20, Direct2D custom drawing, builds FanControl.UI.dll)
+│   └── FanControl.Ble.Native # Native BLE bridge (C++/WinRT → FanControl.Ble.dll, called via P/Invoke)
+├── installer/                # Hand-written installer/uninstaller (C++20 + Direct2D) and packaging script
 ├── tests/FanControl.Tests
 └── docs/                     # Architecture, device protocol and UI protocol docs
 ```
@@ -115,8 +116,8 @@ Ownership: temperatures/RPM/PWM/connection state and config writes live only in 
 
 - Windows 10/11 x64;
 - .NET 8 SDK (8.0.423+) — to build the host and libraries;
-- MSVC (Visual Studio 2026 Build Tools or IDE) + Windows SDK 10, C++20 — to build the UI;
-- Inno Setup 6 (to build installers).
+- MSVC (Visual Studio 2026 Build Tools or IDE) + Windows SDK 10, C++20 — to build the UI and the BLE bridge (C++/WinRT headers ship with the SDK, linked against `WindowsApp.lib`);
+- Python 3 (standard-library `lzma` only, used when packing the installer).
 
 ## Build
 
@@ -131,7 +132,12 @@ build.bat
 # or with CMake (bundled with Visual Studio)
 cmake -B build -S . && cmake --build build --config Release
 
-# Host, libraries & tests: output is bin\Debug\net8.0-windows\FanControl.exe + FanControl.UI.dll
+# Native BLE bridge (C++/WinRT): build.bat produces build\FanControl.Ble.dll; the host build/publish copies it
+cd src\FanControl.Ble.Native
+build.bat
+cd ..\..
+
+# Host, libraries & tests: output is bin\Debug\net8.0-windows\FanControl.exe + FanControl.UI.dll + FanControl.Ble.dll
 dotnet build src\FanControl.Host\FanControl.Host.csproj -c Debug
 dotnet test tests\FanControl.Tests
 ```
@@ -142,12 +148,12 @@ dotnet test tests\FanControl.Tests
 powershell -NoProfile -ExecutionPolicy Bypass -File installer\_build-release.ps1
 ```
 
-The script builds the C++ UI (`build\FanControl.UI.dll`), publishes the host in both flavors, copies the DLL into the publish folder, zips it and calls Inno Setup. Artifacts land **outside** the repo in `..\..\artifacts\`.
+The script builds the C++ UI (`build\FanControl.UI.dll`), publishes the host in both flavors, copies the DLL into the publish folder, zips it, builds the native installer (`installer\native\build.bat` produces `setup.exe` and `uninstall.exe` from the same sources) and appends both payloads with `installer\pack.py` (raw LZMA2). Artifacts land **outside** the repo in `..\..\artifacts\`.
 
 | Form | Self-contained (no .NET needed) | Needs .NET 8 |
 | --- | --- | --- |
-| Portable zip | `..\..\artifacts\release\FanControl-1.4.0-selfcontained-win-x64.zip` (~34 MB) | `..\..\artifacts\release\FanControl-1.4.0-framework-win-x64.zip` (~2.5 MB) |
-| Installer | `..\..\artifacts\installer\FanControl-Setup-Full-1.4.0.exe` (~27 MB) | `..\..\artifacts\installer\FanControl-Setup-Slim-1.4.0.exe` (~4 MB) |
+| Portable zip | `..\..\artifacts\release\FanControl-2.0.0-selfcontained-win-x64.zip` (~34 MB) | `..\..\artifacts\release\FanControl-2.0.0-framework-win-x64.zip` (~2.5 MB) |
+| Installer (one package, picks a payload at install time) | `..\..\artifacts\installer\FanControl-Setup-2.0.0.exe` (~28 MB, carries both payloads) | — |
 
 > `_build-release.ps1` must stay saved as **UTF-8 with BOM**: PowerShell 5.1 parses BOM-less files as GBK and mangles the Chinese literals.
 
@@ -160,6 +166,11 @@ Run `FanControl.exe` from the publish output (the installer, shortcuts and unins
 - Administrator rights are required (hardware sensors); auto-start runs silently with highest privileges via Task Scheduler;
 - `FanControl.exe` and `FanControl.UI.dll` must sit in the same folder; when the DLL is missing the host shows a message box and keeps running in the tray;
 - The auto-start scheduled task runs `<install dir>\FanControl.exe --autostart`, exactly like 1.3.0, so upgrading keeps the existing task working.
+  The task is written as a complete task XML (no longer a one-line `schtasks /Create /TR`): battery restrictions are off and it carries the working directory and the current user, so laptops on battery still start it; if the task cannot be created, the installer falls back to `HKCU\...\Run`.
+- Uninstall: the uninstaller stops `FanControl.exe`, removes the scheduled task and the `Run` value, deletes shortcuts and registry keys, then the program files; it also deletes itself
+  (Windows refuses to delete a running exe, so a copy in `%TEMP%` finishes the job, and the install folder is removed once only the uninstaller was left in it).
+  User data in `%APPDATA%\FanControl` is only removed when "delete user data" is ticked.
+- Install/uninstall steps are logged to `%ProgramData%\FanControl\setup.log` — check it first when something silently fails.
 
 ## Temperature sources
 

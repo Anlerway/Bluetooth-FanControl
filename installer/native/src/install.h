@@ -13,8 +13,8 @@ struct InstallRequest {
     DataMode     dataMode = DataMode::AppData;
     std::wstring customDir;      // dataMode == Custom 时有效
     bool         desktopShortcut = true;
+    bool         startMenuShortcut = true;
     bool         autostart = false;
-    bool         launchAfter = true;
     bool         chinese = true;
     bool         preferSlim = true;   // 有精简版负载时优先用
 };
@@ -45,6 +45,8 @@ struct InstallInfo {
 
 // 读取 HKLM\SOFTWARE\FanControl 元数据
 bool ReadInstallInfo(InstallInfo* info);
+// 计划任务 FanControl 是否已存在（升级时恢复「开机自动启动」开关用）
+bool AutostartEnabled();
 void ForgetInstallInfo();
 
 // 默认安装目录：%ProgramFiles%\FanControl
@@ -53,9 +55,16 @@ std::wstring DefaultInstallDir();
 std::wstring ResolveDataRoot(DataMode mode, const std::wstring& installDir, const std::wstring& customDir);
 // 是否已存在 system.json（首启判定），用于「检测到已有配置」提示
 bool HasExistingConfig(const std::wstring& installDir, const std::wstring& dataRoot);
-// 系统是否装了 .NET 8 桌面运行时（决定用精简版还是完整版负载）
-bool HasDesktopRuntime8();
+// 系统是否装了 .NET 8 运行时（只需要 Microsoft.NETCore.App，不需要 Windows Desktop Runtime；
+// 决定用精简版还是完整版负载）
+bool HasDotnetRuntime8();
 // 调用方（UI）预览时使用：负载里精简版是否存在，以及需要多少磁盘
 bool PayloadAvailable(const std::wstring& exePath);
+
+// 卸载收尾：把卸载器自己复制到 %TEMP%，用 --cleanup 启动副本；副本负责删掉原 uninstall.exe、
+// 删掉已经变空的安装目录，最后把副本自己登记成重启时删除。成功返回 true（调用方应立刻退出）。
+bool StartSelfCleanup(const std::wstring& installDir, const std::wstring& selfPath);
+// 副本进程入口：main.cpp 见到 --cleanup <installDir> <selfPath> <parentPid> 时调用。
+int RunCleanupWorker(const std::wstring& installDir, const std::wstring& selfPath, unsigned long parentPid);
 
 }  // namespace fc

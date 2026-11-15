@@ -26,6 +26,8 @@ Theme MakeTheme(bool dark) {
         t.controlHover = Col(0x3A3A3A);
         t.track        = Col(0x3F3F3F);
         t.danger       = Col(0xFF99A4);
+        t.dangerHover  = Col(0xFFB4BC);
+        t.dangerText   = Col(0x000000);
         t.ok           = Col(0x6CCB5F);
     } else {
         t.windowBg     = Col(0xF3F3F3);
@@ -43,6 +45,8 @@ Theme MakeTheme(bool dark) {
         t.controlHover = Col(0xF5F5F5);
         t.track        = Col(0xE2E2E2);
         t.danger       = Col(0xC42B1C);
+        t.dangerHover  = Col(0xA51F12);
+        t.dangerText   = Col(0xFFFFFF);
         t.ok           = Col(0x0F7B0F);
     }
     return t;
@@ -78,10 +82,13 @@ bool Fonts::Create(IDWriteFactory* dw) {
 }
 
 void Fonts::Release() {
-    for (IDWriteTextFormat** f : {&display24, &title20, &h16, &body14, &strong14, &small12, &glyph}) {
-        if (*f) {
-            (*f)->Release();
-            *f = nullptr;
+    IDWriteTextFormat* Fonts::*members[] = {&Fonts::display24, &Fonts::title20, &Fonts::h16, &Fonts::body14,
+                                            &Fonts::strong14, &Fonts::small12, &Fonts::glyph};
+    for (IDWriteTextFormat* Fonts::*member : members) {
+        IDWriteTextFormat*& f = this->*member;
+        if (f) {
+            f->Release();
+            f = nullptr;
         }
     }
 }

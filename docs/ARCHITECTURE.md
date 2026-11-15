@@ -106,7 +106,7 @@ LibreHardwareMonitor 的模块是内存大头：只开 CPU 时私有 35 MB / 工
 - 界面：`resource.rc` 把图标按**数字 101** 编进 DLL，注册窗口类时用 `LoadImageW(module, MAKEINTRESOURCEW(101), IMAGE_ICON, 0, 0, LR_DEFAULTSIZE | LR_SHARED)` 取；`wc.hIconSm` 另外取 16x16，标题栏与任务栏缩略图不会拿 256 档硬缩。注意不能写成 `LoadIconW(module, L"IDI_ICON1")`——那是按字符串名查资源，数字 ID 查不到，会静默退回系统默认图标。
 - 宿主：`FanControl.Host.csproj` 的 `<ApplicationIcon>` 指向同一个 ico，资源管理器 / 任务栏 / 开始菜单用它。
 - 托盘：`TrayHost` 用 `ExtractIconExW(Environment.ProcessPath, ...)` 取 exe 内嵌图标，取不到才回退 `IDI_APPLICATION`。
-- 安装包：`installer.iss` 的 `SetupIconFile` 也是这个 ico，快捷方式与卸载列表沿用 exe 图标。
+- 安装器：`installer/native/setup.rc` 把同一份 ico 编成 101，安装包 exe 与快捷方式沿用该图标；卸载器 `uninstall.exe` 由安装包内嵌资源写出，沿用同一图标。
 
 ## 界面协议（进程内）
 
@@ -141,7 +141,8 @@ LibreHardwareMonitor 的模块是内存大头：只开 CPU 时私有 35 MB / 工
 ## 设备通信
 
 - 设备侧（ESP32）：BLE（Nordic UART Service）或串口，载荷都是一行 ASCII 文本，详见 [PROTOCOL.md](PROTOCOL.md)。
-- BLE 走 Win32 `bluetoothleapis`（`BluetoothGATT*`）+ SetupAPI 枚举设备接口，**不依赖 WinRT 投影**；因此工程的 TFM 是 `net8.0-windows` 而不是 `net8.0-windows10.0.19041.0`。
+- BLE 走自带的原生桥 `src/FanControl.Ble.Native`（C++/WinRT 投影，导出 `FanControl.Ble.dll`：`fcble_scan/fcble_connect/fcble_write/...`），服务层用 P/Invoke 调用。**不使用 WinRT 的 .NET 投影**，所以 TFM 保持 `net8.0-windows`，发布包不会多出 24 MB 的 `Microsoft.Windows.SDK.NET.dll`。
+- Win32 `bluetoothleapis`（`BluetoothGATT*`）在本机写特征恒返回 `ERROR_INVALID_FUNCTION`（用官方头文件 + 官方导入库复现），已弃用。
 - 托盘用 `Shell_NotifyIcon` + `TrackPopupMenuEx`（P/Invoke），**不依赖 WinForms**。
 - 界面不直接碰设备与注册表：蓝牙设备列表、串口列表、显卡列表分别由宿主的 `scanBle` / `listPorts` / `listGpus` 命令返回，开机自启由 `setAutostart` 写入计划任务（`schtasks /TN FanControl`）——这些都要管理员权限，只能待在宿主进程。
 

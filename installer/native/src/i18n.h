@@ -13,8 +13,16 @@ namespace fc {
     X(VersionLabel,     L"版本 %s",                     L"Version %s")                       \
     X(SectionInstall,   L"安装位置",                    L"Install location")                 \
     X(Change,           L"更改…",                       L"Change…")                          \
-    X(SectionData,      L"数据存储",                    L"Data storage")                     \
-    X(DataHint,         L"配置与日志的保存位置，安装后可以在设置页更改。",                    \
+    X(SectionRuntime,   L"运行环境",                    L"Runtime")                          \
+    X(RuntimeSlimName,  L"精简版",                      L"Slim")                             \
+    X(RuntimeSlimInfo,  L"使用系统已安装的 .NET 8 运行时",                                    \
+                        L"Uses the .NET 8 runtime already on this PC")                       \
+    X(RuntimeFullName,  L"完整版",                      L"Full")                             \
+    X(RuntimeFullInfo,  L"自带 .NET 运行时，体积更大",  L"Bundles the .NET runtime — larger download") \
+    X(RuntimeMissing,   L"未检测到 .NET 8 运行时，将安装完整版",                              \
+                        L".NET 8 runtime not found — the full build will be installed")       \
+    X(SectionData,      L"配置与日志",                  L"Settings and logs")                     \
+    X(DataHint,         L"安装后可以在设置页更改。",                                        \
                         L"Where settings and logs live. You can change this later in Settings.") \
     X(DataAppData,      L"应用数据目录",                L"App data folder")                  \
     X(DataAppDataPath,  L"%APPDATA%\\FanControl",       L"%APPDATA%\\FanControl")            \
@@ -27,11 +35,30 @@ namespace fc {
     X(Browse,           L"浏览…",                       L"Browse…")                          \
     X(SectionOptions,   L"选项",                        L"Options")                          \
     X(OptDesktop,       L"创建桌面快捷方式",            L"Create a desktop shortcut")        \
+    X(OptStartMenu,     L"添加到开始菜单",              L"Add to the Start menu")            \
     X(OptAutostart,     L"开机自动启动",                L"Start with Windows")               \
     X(OptAutostartHint, L"登录后在托盘自动运行（计划任务，需要管理员）",                      \
                         L"Starts in the tray after sign-in (scheduled task, admin)")         \
     X(OptLaunch,        L"安装完成后启动 FanControl",   L"Launch FanControl when finished")  \
+    X(NextAction,       L"下一步",                      L"Next")                             \
+    X(BackAction,       L"上一步",                      L"Back")                             \
+    X(PathInvalid,      L"请填写完整路径，例如 D:\\Apps\\FanControl",                     \
+                        L"Enter a full path, e.g. D:\\Apps\\FanControl")                  \
+    X(InstallTo,        L"将安装到 %s",                 L"Installs to %s")                   \
+    X(AlreadyRunning,   L"已有安装或卸载程序在运行，请先关闭它。",                        \
+                        L"A setup or uninstall program is already running.")                  \
+    X(ConfirmTwice,     L"确定要卸载 FanControl 吗？程序文件、开机自启与快捷方式都会被移除。",  \
+                        L"Uninstall FanControl now? Program files, autostart and shortcuts will be removed.") \
     X(InstallAction,    L"安装",                        L"Install")                          \
+    X(UpgradeAction,    L"升级",                        L"Upgrade")                          \
+    X(UpgradeDetectedNoVer, L"检测到已安装的 FanControl，将就地升级。",                \
+                        L"FanControl is already installed — it upgrades in place.")     \
+    X(UpgradeDetected,  L"检测到已安装的 FanControl %s，将就地升级。",                 \
+                        L"FanControl %s is already installed — it upgrades in place.")  \
+    X(ProgressUpgrade,  L"正在升级",                    L"Upgrading")                        \
+    X(DoneTitleUpgrade, L"升级完成",                    L"Upgrade complete")                 \
+    X(DoneSubtitleUpgrade, L"原来的配置与日志全部沿用，设置无需重选。",                        \
+                        L"Your settings and logs are kept — nothing to reselect.")          \
     X(CancelAction,     L"取消",                        L"Cancel")                           \
     X(UninstallAction,  L"卸载",                        L"Uninstall")                        \
     X(FinishAction,     L"完成",                        L"Finish")                           \
@@ -77,6 +104,8 @@ namespace fc {
     X(ErrPayload,       L"安装包损坏：找不到内置文件。", L"This package is damaged: payload missing.") \
     X(ErrExtract,       L"解压文件失败：%s",            L"Failed to extract files: %s")      \
     X(ErrWrite,         L"无法写入 %s",                 L"Cannot write %s")                  \
+    X(ErrUninstaller,   L"无法写入卸载程序，请检查安装目录权限。",                              \
+                        L"Could not write the uninstaller — check the install folder permissions") \
     X(ErrRegistry,      L"写入注册表失败。",            L"Failed to update the registry.")   \
     X(ErrShortcut,      L"创建快捷方式失败。",          L"Failed to create the shortcut.")   \
     X(ErrAutostart,     L"设置开机自启失败。",          L"Failed to update autostart.")      \

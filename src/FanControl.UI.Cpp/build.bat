@@ -28,7 +28,7 @@ rem /MT: static C runtime so the DLL loads on machines without the VC++ redistri
 cl /nologo /std:c++20 /EHsc /utf-8 /W4 /permissive- /LD /MT ^
    /DUNICODE /D_UNICODE /DNOMINMAX /DWIN32_LEAN_AND_MEAN ^
    /Fo:build\ /Fe:build\FanControl.UI.dll ^
-   src\main.cpp src\app.cpp src\ipc.cpp src\i18n.cpp build\resource.res ^
+   src\main.cpp src\app.cpp src\ipc.cpp src\i18n.cpp src\serialports.cpp build\resource.res ^
    /link d2d1.lib dwrite.lib dwmapi.lib user32.lib gdi32.lib shell32.lib ole32.lib advapi32.lib
 exit /b %ERRORLEVEL%
 

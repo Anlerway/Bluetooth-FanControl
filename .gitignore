@@ -9,6 +9,9 @@
 # MSVC 中间产物（界面工程直接调 cl）
 src/FanControl.UI.Cpp/build/
 installer/native/build/
+src/FanControl.Ble.Native/build/
+src/FanControl.Ble.Native/src/*.exp
+src/FanControl.Ble.Native/src/*.lib
 *.obj
 *.res
 build.log

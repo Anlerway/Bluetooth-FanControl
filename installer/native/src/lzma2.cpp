@@ -271,18 +271,39 @@ bool DecodeLzmaChunk(LzmaState& st, RangeDecoder& rc, uint8_t* outBuf, size_t& o
 
         uint8_t* dst = outBuf + outPos;
         if (distance >= len) {
-            std::memcpy(dst, dst - distance, len);
+            // Short matches dominate real streams, and a memcpy() call for two or
+            // three bytes costs more than the copy itself, so small lengths are
+            // unrolled by hand.
+            const uint8_t* src2 = dst - distance;
+            if (len <= 16) {
+                for (uint32_t i = 0; i < len; ++i)
+                    dst[i] = src2[i];
+            } else {
+                std::memcpy(dst, src2, len);
+            }
         } else if (distance == 1) {
-            std::memset(dst, dst[-1], len);
+            if (len <= 16) {
+                const uint8_t b = dst[-1];
+                for (uint32_t i = 0; i < len; ++i)
+                    dst[i] = b;
+            } else {
+                std::memset(dst, dst[-1], len);
+            }
         } else {
-            // Overlapping copy: grow the already produced pattern by doubling.
+            // Overlapping copy: the byte pattern repeats every "distance" bytes.
+            // Phase 1 materialises exactly one period, phase 2 doubles the amount
+            // of pattern already produced, so every memcpy() stays disjoint.
+            const size_t period = static_cast<size_t>(distance);
             size_t done = 0;
-            size_t step = static_cast<size_t>(distance);
-            while (done < len) {
-                const size_t n = std::min(step, static_cast<size_t>(len) - done);
+            while (done < len && done < period) {
+                const size_t n = std::min(period - done, static_cast<size_t>(len) - done);
                 std::memcpy(dst + done, dst + done - distance, n);
                 done += n;
-                step  = done;
+            }
+            while (done < len) {
+                const size_t n = std::min(done, static_cast<size_t>(len) - done);
+                std::memcpy(dst + done, dst, n);
+                done += n;
             }
         }
         outPos += len;

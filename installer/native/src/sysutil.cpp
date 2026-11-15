@@ -34,6 +34,41 @@ constexpr int    kPollMs      = 50;         // 进程等待轮询间隔
 
 bool IsSep(wchar_t c) { return c == L'\\' || c == L'/'; }
 
+// 把未配对的代理项替换为 U+FFFD，供 WideCharToMultiByte 兜底使用。
+std::wstring SanitizeSurrogates(const std::wstring& s) {
+    std::wstring out;
+    out.reserve(s.size() + 4);
+    for (size_t i = 0; i < s.size(); ++i) {
+        const wchar_t c = s[i];
+        if (c >= 0xD800 && c <= 0xDBFF) {
+            if (i + 1 < s.size() && s[i + 1] >= 0xDC00 && s[i + 1] <= 0xDFFF) {
+                out.push_back(c);
+                out.push_back(s[++i]);
+            } else {
+                out.push_back(static_cast<wchar_t>(0xFFFD));
+            }
+        } else if (c >= 0xDC00 && c <= 0xDFFF) {
+            out.push_back(static_cast<wchar_t>(0xFFFD));
+        } else {
+            out.push_back(c);
+        }
+    }
+    return out;
+}
+
+// 规范化成绝对路径（折叠 . 与 ..）；失败时原样返回。
+std::wstring CanonicalizePath(const std::wstring& path) {
+    if (path.empty()) return path;
+    std::vector<wchar_t> buf(MAX_PATH, L'\0');
+    for (;;) {
+        const DWORD n = GetFullPathNameW(path.c_str(), static_cast<DWORD>(buf.size()), buf.data(), nullptr);
+        if (n == 0) return path;
+        if (static_cast<size_t>(n) < buf.size()) return std::wstring(buf.data(), static_cast<size_t>(n));
+        if (buf.size() >= kMaxPathLen) return path;
+        buf.resize(std::min<size_t>(buf.size() * 2, kMaxPathLen));
+    }
+}
+
 // 去掉 \\?\ 前缀；\\?\UNC\server\share 还原为 \\server\share。
 std::wstring StripLongPrefix(const std::wstring& path) {
     if (path.size() < 4) return path;
@@ -163,11 +198,19 @@ std::wstring Utf8ToWide(const std::string& s) {
 std::string WideToUtf8(const std::wstring& s) {
     if (s.empty()) return std::string();
     if (s.size() > static_cast<size_t>(INT_MAX)) return std::string();
-    const int len = static_cast<int>(s.size());
-    const int need = WideCharToMultiByte(CP_UTF8, 0, s.data(), len, nullptr, 0, nullptr, nullptr);
-    if (need <= 0) return std::string();
+    const wchar_t* src = s.data();
+    int len = static_cast<int>(s.size());
+    int need = WideCharToMultiByte(CP_UTF8, 0, src, len, nullptr, 0, nullptr, nullptr);
+    std::wstring sanitized;  // 仅在含未配对代理项时用于兜底
+    if (need <= 0) {
+        sanitized = SanitizeSurrogates(s);
+        src = sanitized.c_str();
+        len = static_cast<int>(sanitized.size());
+        need = WideCharToMultiByte(CP_UTF8, 0, src, len, nullptr, 0, nullptr, nullptr);
+        if (need <= 0) return std::string();
+    }
     std::string out(static_cast<size_t>(need), '\0');
-    const int got = WideCharToMultiByte(CP_UTF8, 0, s.data(), len, out.data(), need, nullptr, nullptr);
+    const int got = WideCharToMultiByte(CP_UTF8, 0, src, len, out.data(), need, nullptr, nullptr);
     if (got <= 0) return std::string();
     out.resize(static_cast<size_t>(got));
     return out;
@@ -200,7 +243,7 @@ std::wstring GetModulePath() {
         const DWORD n = GetModuleFileNameW(nullptr, buf.data(), static_cast<DWORD>(buf.size()));
         if (n == 0) return std::wstring();
         if (static_cast<size_t>(n) < buf.size() || buf.size() >= kMaxPathLen) {
-            return StripLongPrefix(std::wstring(buf.data(), static_cast<size_t>(n)));
+            return CanonicalizePath(StripLongPrefix(std::wstring(buf.data(), static_cast<size_t>(n))));
         }
         buf.resize(std::min<size_t>(buf.size() * 2, kMaxPathLen));
     }

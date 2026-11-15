@@ -270,7 +270,10 @@ public sealed class ConfigManager : IConfigManager
 
         try
         {
-            MoveDirectoryContents(Path.Combine(fromRoot, "Config"), Path.Combine(toRoot, "Config"));
+            // system.json 不能搬：SaveSystemConfigAsync 已经把"新位置"的那份写好了，
+            // 再用旧根目录里的覆盖回去，下次启动就会按旧模式找数据（配置看起来全丢）。
+            var skipSystemJson = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "system.json" };
+            MoveDirectoryContents(Path.Combine(fromRoot, "Config"), Path.Combine(toRoot, "Config"), skipSystemJson);
             MoveDirectoryContents(Path.Combine(fromRoot, "Logs"), Path.Combine(toRoot, "Logs"));
             _logger.LogInformation("用户数据已迁移：{From} -> {To}", fromRoot, toRoot);
         }
@@ -354,7 +357,10 @@ public sealed class ConfigManager : IConfigManager
         File.Move(from, to, overwrite: true);
     }
 
-    private static void MoveDirectoryContents(string from, string to)
+    private static void MoveDirectoryContents(
+        string from,
+        string to,
+        ISet<string>? skipFileNames = null)
     {
         if (!Directory.Exists(from) || string.Equals(from, to, StringComparison.OrdinalIgnoreCase))
         {
@@ -364,12 +370,17 @@ public sealed class ConfigManager : IConfigManager
         Directory.CreateDirectory(to);
         foreach (var file in Directory.GetFiles(from))
         {
+            if (skipFileNames is not null && skipFileNames.Contains(Path.GetFileName(file)))
+            {
+                continue;
+            }
+
             File.Move(file, Path.Combine(to, Path.GetFileName(file)), overwrite: true);
         }
 
         foreach (var directory in Directory.GetDirectories(from))
         {
-            MoveDirectoryContents(directory, Path.Combine(to, Path.GetFileName(directory)));
+            MoveDirectoryContents(directory, Path.Combine(to, Path.GetFileName(directory)), skipFileNames);
         }
 
         try

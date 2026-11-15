@@ -5,8 +5,11 @@
 #include <dwmapi.h>
 
 #include <winver.h>
+#include <windowsx.h>
 
+#include <algorithm>
 #include <cmath>
+#include <cstring>
 
 #include "i18n.h"
 #include "payload.h"
@@ -14,6 +17,7 @@
 
 #pragma comment(lib, "d2d1.lib")
 #pragma comment(lib, "dwrite.lib")
+#pragma comment(lib, "windowscodecs.lib")
 #pragma comment(lib, "dwmapi.lib")
 #pragma comment(lib, "shell32.lib")
 #pragma comment(lib, "ole32.lib")
@@ -43,16 +47,94 @@ std::wstring ReadOwnVersion() {
     const std::wstring path = GetModulePath();
     DWORD dummy = 0;
     const DWORD size = GetFileVersionInfoSizeW(path.c_str(), &dummy);
-    if (size == 0) return L"1.4.0";
+    if (size == 0) return L"2.0.0";
     std::vector<BYTE> data(size);
-    if (!GetFileVersionInfoW(path.c_str(), 0, size, data.data())) return L"1.4.0";
+    if (!GetFileVersionInfoW(path.c_str(), 0, size, data.data())) return L"2.0.0";
     VS_FIXEDFILEINFO* info = nullptr;
     UINT len = 0;
-    if (!VerQueryValueW(data.data(), L"\\", reinterpret_cast<void**>(&info), &len) || !info) return L"1.4.0";
+    if (!VerQueryValueW(data.data(), L"\\", reinterpret_cast<void**>(&info), &len) || !info) return L"2.0.0";
     return Format(L"%u.%u.%u", HIWORD(info->dwFileVersionMS), LOWORD(info->dwFileVersionMS),
                   HIWORD(info->dwFileVersionLS));
 }
 
+}  // namespace
+
+namespace {
+
+// 统一成反斜杠并去掉末尾分隔符（盘根 D:\ 除外）：输入框里不显示尾部分隔符更干净。
+std::wstring StripSeparators(const std::wstring& in) {
+    std::wstring out = in;
+    while (!out.empty() && (out.back() == L' ' || out.back() == L'\t')) out.pop_back();
+    for (wchar_t& c : out) {
+        if (c == L'/') c = L'\\';
+    }
+    while (!out.empty() && (out.front() == L' ')) out.erase(out.begin());
+    while (out.size() > 3 && out.back() == L'\\') out.pop_back();
+    return out;
+}
+
+// 路径输入框的粘贴来源：去掉换行等控制字符，避免粘进一段说明文字就毁掉路径。
+std::wstring ClipboardPath() {
+    std::wstring out;
+    if (!OpenClipboard(nullptr)) return out;
+    if (HANDLE handle = GetClipboardData(CF_UNICODETEXT)) {
+        if (const wchar_t* text = static_cast<const wchar_t*>(GlobalLock(handle))) {
+            out.assign(text);
+            GlobalUnlock(handle);
+        }
+    }
+    CloseClipboard();
+    for (wchar_t& c : out) {
+        if (c < 32) c = L' ';
+    }
+    return StripSeparators(out);
+}
+
+// 输入框复制出去的只有纯文本，不带任何格式。
+void CopyToClipboard(const std::wstring& text) {
+    if (text.empty()) return;
+    if (!OpenClipboard(nullptr)) return;
+    EmptyClipboard();
+    const size_t bytes = (text.size() + 1) * sizeof(wchar_t);
+    if (HGLOBAL mem = GlobalAlloc(GMEM_MOVEABLE, bytes)) {
+        if (void* dst = GlobalLock(mem)) {
+            std::memcpy(dst, text.c_str(), bytes);
+            GlobalUnlock(mem);
+            SetClipboardData(CF_UNICODETEXT, mem);
+        } else {
+            GlobalFree(mem);
+        }
+    }
+    CloseClipboard();
+}
+
+// 「浏览…」选中的是父目录，落盘时补一层产品文件夹；已经以它结尾就不再叠加。
+constexpr wchar_t kProductFolder[] = L"FanControl";
+
+std::wstring LowerAscii(std::wstring text) {
+    for (wchar_t& c : text) {
+        if (c >= L'A' && c <= L'Z') c = static_cast<wchar_t>(c - L'A' + L'a');
+    }
+    return text;
+}
+
+std::wstring WithProductFolder(const std::wstring& parent) {
+    const std::wstring base = StripSeparators(parent);
+    if (base.empty()) return base;
+    const std::wstring tail = std::wstring(L"\\") + kProductFolder;
+    if (base.size() >= tail.size() &&
+        LowerAscii(base.substr(base.size() - tail.size())) == LowerAscii(tail)) {
+        return base;
+    }
+    if (base.back() == L'\\') return base + kProductFolder;
+    return base + L"\\" + kProductFolder;
+}
+
+}  // namespace
+
+namespace {
+// 安装页与卸载页共用的窗口高度基准（两页等高；第二页选自定义目录时会略高）。
+constexpr float kPageHeight = 578.0f;
 }  // namespace
 
 bool App::Create(HWND hwnd, SetupMode mode) {
@@ -64,11 +146,18 @@ bool App::Create(HWND hwnd, SetupMode mode) {
                                    reinterpret_cast<IUnknown**>(&dw_)))) {
         return false;
     }
+    gfx_.SetUiScale(kUiScale);
     if (!gfx_.Init(hwnd_, d2d_, dw_)) return false;
+
+    // 图标：取 128 像素那档（256 那档是 PNG 压缩，WIC 的 CreateBitmapFromHICON 解不了）。
+    appIcon_ = static_cast<HICON>(
+        LoadImageW(GetModuleHandleW(nullptr), MAKEINTRESOURCEW(101), IMAGE_ICON, 128, 128, LR_DEFAULTCOLOR));
+    gfx_.LoadIcon(appIcon_);
 
     exePath_ = GetModulePath();
     version_ = ReadOwnVersion();
-    preferSlim_ = HasDesktopRuntime8();
+    runtimeAvailable_ = HasDotnetRuntime8();
+    preferSlim_ = runtimeAvailable_;
 
     // 卸载器跟随已安装时选定的语言；安装器跟随系统语言。
     InstallInfo info;
@@ -80,21 +169,34 @@ bool App::Create(HWND hwnd, SetupMode mode) {
     }
     SetUiLanguage(chinese_);
 
-    installDir_ = (mode_ == SetupMode::Uninstall && haveInfo && !info.installDir.empty()) ? info.installDir
-                                                                                          : DefaultInstallDir();
     if (mode_ == SetupMode::Uninstall) {
+        installDir_ = StripSeparators((haveInfo && !info.installDir.empty()) ? info.installDir : DefaultInstallDir());
         dataRoot_ = info.dataRoot.empty() ? ResolveDataRoot(info.dataMode, installDir_, L"") : info.dataRoot;
         page_ = Page::Confirm;
         dataMode_ = info.dataMode;
     } else {
-        dataMode_ = DataMode::AppData;
+        // 已经装过同一个程序：就地升级，沿用原安装目录与数据位置，开关恢复成当前实况。
+        upgrade_ = haveInfo && info.installed && !info.installDir.empty();
+        installedVersion_ = info.version;
+        // 输入框里始终是最终安装目录：全新安装默认 %ProgramFiles%\FanControl，升级沿用原目录。
+        installDir_ = StripSeparators(upgrade_ ? info.installDir : DefaultInstallDir());
+        dataMode_ = upgrade_ ? info.dataMode : DataMode::AppData;
+        if (upgrade_ && dataMode_ == DataMode::Custom) customDir_ = info.dataRoot;
+        if (upgrade_) {
+            // 升级只有一页，选项页看不到：开关必须先按当前实况恢复，否则会被默认值覆盖
+            autostart_ = AutostartEnabled();
+            desktopShortcut_ = FileExists(Join(NormalizeDir(GetCommonDesktopDir()), L"FanControl.lnk"));
+            startMenuShortcut_ =
+                FileExists(Join(NormalizeDir(GetProgramsMenuDir()), L"FanControl.lnk"));
+        }
         page_ = Page::Configure;
     }
     status_ = T(Str::StepPreparing);
 
     PayloadSet payload;
     if (PayloadSet::Load(exePath_, &payload, nullptr)) {
-        if (const PayloadSegment* seg = payload.Select(preferSlim_)) payloadBytes_ = seg->rawSize;
+        bytesFull_ = payload.seg[0].present ? payload.seg[0].rawSize : 0;
+        bytesSlim_ = payload.seg[1].present ? payload.seg[1].rawSize : 0;
     }
     RefreshExistingConfig();
     ApplyStrings();
@@ -105,6 +207,10 @@ bool App::Create(HWND hwnd, SetupMode mode) {
 void App::Destroy() {
     if (worker_.joinable()) worker_.detach();
     gfx_.Shutdown();
+    if (appIcon_) {
+        DestroyIcon(appIcon_);
+        appIcon_ = nullptr;
+    }
     if (dw_) {
         dw_->Release();
         dw_ = nullptr;
@@ -117,11 +223,16 @@ void App::Destroy() {
 
 std::wstring App::DataRootText() const {
     if (mode_ == SetupMode::Uninstall && !dataRoot_.empty()) return dataRoot_;
-    return ResolveDataRoot(dataMode_, installDir_, customDir_);
+    return ResolveDataRoot(dataMode_, InstallTargetDir(), customDir_);
+}
+
+std::wstring App::InstallTargetDir() const {
+    return StripSeparators(installDir_);
 }
 
 void App::RefreshExistingConfig() {
-    existingConfig_ = HasExistingConfig(installDir_, ResolveDataRoot(dataMode_, installDir_, customDir_));
+    const std::wstring target = InstallTargetDir();
+    existingConfig_ = HasExistingConfig(target, ResolveDataRoot(dataMode_, target, customDir_));
 }
 
 void App::ApplyStrings() {
@@ -186,6 +297,11 @@ LRESULT App::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
     case WM_ERASEBKGND:
         return 1;
+    case WM_SIZE:
+        // 客户区变了必须重建 D2D 位图，否则画面会被整体拉伸（高 DPI 下尤其明显）。
+        gfx_.Resize(static_cast<UINT>(LOWORD(lp)), static_cast<UINT>(HIWORD(lp)));
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        return 0;
     case WM_PAINT: {
         PAINTSTRUCT ps{};
         BeginPaint(hwnd_, &ps);
@@ -194,8 +310,13 @@ LRESULT App::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     }
     case WM_MOUSEMOVE: {
-        const float x = static_cast<float>(GET_X_LPARAM(lp)) / gfx_.dpi();
-        const float y = static_cast<float>(GET_Y_LPARAM(lp)) / gfx_.dpi();
+        const float x = static_cast<float>(GET_X_LPARAM(lp)) / gfx_.scale();
+        const float y = static_cast<float>(GET_Y_LPARAM(lp)) / gfx_.scale();
+        if (selecting_ && pathFocused_) {
+            const float relX = x - pathFieldRect_.left - 12.0f + pathScroll_;
+            SetCaretPos(PathIndexAtX(relX), true);
+            return 0;
+        }
         const Hit hit = HitAt(x, y);
         if (hit != hoverId_) {
             hoverId_ = hit;
@@ -211,23 +332,126 @@ LRESULT App::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
         return 0;
     case WM_LBUTTONDOWN: {
         SetCapture(hwnd_);
-        const float x = static_cast<float>(GET_X_LPARAM(lp)) / gfx_.dpi();
-        const float y = static_cast<float>(GET_Y_LPARAM(lp)) / gfx_.dpi();
+        const float x = static_cast<float>(GET_X_LPARAM(lp)) / gfx_.scale();
+        const float y = static_cast<float>(GET_Y_LPARAM(lp)) / gfx_.scale();
         pressedId_ = HitAt(x, y);
+        if (pressedId_ == Hit::PathField && !upgrade_) {
+            FocusPath(true);
+            const bool shiftDown = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+            const float relX = x - pathFieldRect_.left - 12.0f + pathScroll_;
+            SetCaretPos(PathIndexAtX(relX), shiftDown);
+            selecting_ = true;
+        } else if (pathFocused_) {
+            FocusPath(false);
+        }
         return 0;
     }
     case WM_LBUTTONUP: {
         ReleaseCapture();
-        const float x = static_cast<float>(GET_X_LPARAM(lp)) / gfx_.dpi();
-        const float y = static_cast<float>(GET_Y_LPARAM(lp)) / gfx_.dpi();
+        selecting_ = false;
+        const float x = static_cast<float>(GET_X_LPARAM(lp)) / gfx_.scale();
+        const float y = static_cast<float>(GET_Y_LPARAM(lp)) / gfx_.scale();
         const Hit hit = HitAt(x, y);
         const Hit pressed = pressedId_;
         pressedId_ = Hit::None;
         if (hit != Hit::None && hit == pressed) Activate(hit);
         return 0;
     }
+    case WM_LBUTTONDBLCLK:
+        if (!upgrade_ && HitAt(static_cast<float>(GET_X_LPARAM(lp)) / gfx_.scale(),
+                               static_cast<float>(GET_Y_LPARAM(lp)) / gfx_.scale()) == Hit::PathField) {
+            FocusPath(true);
+            SelectAllPath();
+            selecting_ = false;
+        }
+        return 0;
+    case WM_CHAR:
+        if (pathFocused_) {
+            if (wp >= 32 && wp != 127) {
+                const wchar_t ch = static_cast<wchar_t>(wp);
+                if (std::wstring(L"<>|\"?*").find(ch) == std::wstring::npos) InsertText(std::wstring(1, ch));
+            }
+            return 0;
+        }
+        break;
+    case WM_KEYDOWN:
+        if (pathFocused_) {
+            const bool ctrl = (GetKeyState(VK_CONTROL) & 0x8000) != 0;
+            const bool shiftDown = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+            const size_t len = installDir_.size();
+            switch (wp) {
+            case VK_LEFT:
+                if (!shiftDown && HasPathSelection()) {
+                    SetCaretPos(PathSelBegin(), false);
+                } else if (caret_ > 0) {
+                    SetCaretPos(caret_ - 1, shiftDown);
+                }
+                break;
+            case VK_RIGHT:
+                if (!shiftDown && HasPathSelection()) {
+                    SetCaretPos(PathSelEnd(), false);
+                } else if (caret_ < len) {
+                    SetCaretPos(caret_ + 1, shiftDown);
+                }
+                break;
+            case VK_HOME:
+                SetCaretPos(0, shiftDown);
+                break;
+            case VK_END:
+                SetCaretPos(len, shiftDown);
+                break;
+            case VK_BACK:
+                if (!DeletePathSelection() && caret_ > 0) {
+                    installDir_.erase(caret_ - 1, 1);
+                    SetCaretPos(caret_ - 1, false);
+                    RefreshExistingConfig();
+                }
+                break;
+            case VK_DELETE:
+                if (!DeletePathSelection() && caret_ < len) {
+                    installDir_.erase(caret_, 1);
+                    RefreshExistingConfig();
+                }
+                break;
+            case 'A':
+                if (ctrl) SelectAllPath();
+                break;
+            case 'C':
+                if (ctrl) CopyToClipboard(HasPathSelection() ? SelectedPathText() : installDir_);
+                break;
+            case 'X':
+                if (ctrl && HasPathSelection()) {
+                    CopyToClipboard(SelectedPathText());
+                    (void)DeletePathSelection();
+                }
+                break;
+            case VK_RETURN:
+                Activate(Hit::Primary);
+                return 0;
+            case VK_ESCAPE:
+                FocusPath(false);
+                return 0;
+            case 'V':
+                if (ctrl) InsertText(ClipboardPath());
+                break;
+            default:
+                break;
+            }
+            caretOn_ = true;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+            return 0;
+        }
+        break;
+    case WM_TIMER:
+        if (wp == 1) {
+            caretOn_ = !caretOn_;
+            if (pathFocused_) InvalidateRect(hwnd_, nullptr, FALSE);
+            return 0;
+        }
+        break;
     case WM_SETCURSOR:
-        SetCursor(LoadCursorW(nullptr, hoverId_ != Hit::None ? IDC_HAND : IDC_ARROW));
+        SetCursor(LoadCursorW(nullptr, hoverId_ == Hit::PathField ? IDC_IBEAM
+                                          : (hoverId_ != Hit::None ? IDC_HAND : IDC_ARROW)));
         return TRUE;
     case App::kMsgProgress: {
         std::wstring* text = reinterpret_cast<std::wstring*>(lp);
@@ -260,7 +484,9 @@ LRESULT App::HandleMessage(UINT msg, WPARAM wp, LPARAM lp) {
         const RECT* rect = reinterpret_cast<const RECT*>(lp);
         SetWindowPos(hwnd_, nullptr, rect->left, rect->top, rect->right - rect->left, rect->bottom - rect->top,
                      SWP_NOZORDER | SWP_NOACTIVATE);
-        gfx_.Resize(static_cast<UINT>(rect->right - rect->left), static_cast<UINT>(rect->bottom - rect->top));
+        RECT client{};
+        GetClientRect(hwnd_, &client);
+        gfx_.Resize(static_cast<UINT>(client.right), static_cast<UINT>(client.bottom));
         InvalidateRect(hwnd_, nullptr, FALSE);
         return 0;
     }
@@ -290,10 +516,31 @@ void App::Activate(Hit id) {
         }
         break;
     }
-    case Hit::ChangeDir: {
+    case Hit::PickSlim:
+        if (runtimeAvailable_ && !preferSlim_) {
+            preferSlim_ = true;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+        break;
+    case Hit::PickFull:
+        if (preferSlim_) {
+            preferSlim_ = false;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        }
+        break;
+    case Hit::PathField:
+        if (upgrade_) break;   // 升级页面位置锁定
+        FocusPath(true);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        break;
+    case Hit::BrowseInstall: {
+        if (upgrade_) break;   // 升级页面不提供换目录
         std::wstring picked;
         if (PickFolder(&picked, installDir_)) {
-            installDir_ = picked;
+            // 选中的是父目录：直接把 <父目录>\FanControl 写回输入框，所见即所得。
+            installDir_ = StripSeparators(WithProductFolder(picked));
+            caret_ = installDir_.size();
+            selAnchor_ = caret_;
             RefreshExistingConfig();
             InvalidateRect(hwnd_, nullptr, FALSE);
         }
@@ -328,6 +575,10 @@ void App::Activate(Hit id) {
         desktopShortcut_ = !desktopShortcut_;
         InvalidateRect(hwnd_, nullptr, FALSE);
         break;
+    case Hit::OptStartMenu:
+        startMenuShortcut_ = !startMenuShortcut_;
+        InvalidateRect(hwnd_, nullptr, FALSE);
+        break;
     case Hit::OptAutostart:
         autostart_ = !autostart_;
         InvalidateRect(hwnd_, nullptr, FALSE);
@@ -342,15 +593,41 @@ void App::Activate(Hit id) {
         break;
     case Hit::Primary:
         if (page_ == Page::Configure) {
+            if (upgrade_) {
+                // 升级只有一页：直接开始覆盖安装，位置、数据目录与开关全部沿用原状
+                BeginInstall();
+                break;
+            }
+            if (!PathValid()) {
+                FocusPath(true);
+                InvalidateRect(hwnd_, nullptr, FALSE);
+                break;
+            }
+            CommitPath();
+            page_ = Page::Data;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        } else if (page_ == Page::Data) {
             BeginInstall();
         } else if (page_ == Page::Confirm) {
-            BeginUninstall();
+            // 二次确认：默认按钮放在「否」，避免顺手一路回车把程序卸了。
+            if (MessageBoxW(hwnd_, T(Str::ConfirmTwice), T(Str::UninstallTitle),
+                            MB_YESNO | MB_ICONWARNING | MB_DEFBUTTON2) == IDYES) {
+                BeginUninstall();
+            }
+        } else if (page_ == Page::Done) {
+            // 原先在安装线程里就启动了主程序；现在等用户点「完成」再开，免得界面还没看完程序先跳出来。
+            if (launchAfter_) (void)ShellOpen(Join(InstallTargetDir(), L"FanControl.exe"));
+            DestroyWindow(hwnd_);
         } else {
             DestroyWindow(hwnd_);
         }
         break;
     case Hit::Secondary:
-        if (page_ == Page::Progress || page_ == Page::UninstallProgress) {
+        if (page_ == Page::Data) {
+            CommitPath();
+            page_ = Page::Configure;
+            InvalidateRect(hwnd_, nullptr, FALSE);
+        } else if (page_ == Page::Progress || page_ == Page::UninstallProgress) {
             InvalidateRect(hwnd_, nullptr, FALSE);
         } else {
             DestroyWindow(hwnd_);
@@ -373,14 +650,14 @@ void App::BeginInstall() {
     }
     InstallRequest req;
     req.exePath = exePath_;
-    req.installDir = installDir_;
+    req.installDir = InstallTargetDir();
     req.dataMode = dataMode_;
     req.customDir = customDir_;
     req.desktopShortcut = desktopShortcut_;
+    req.startMenuShortcut = startMenuShortcut_;
     req.autostart = autostart_;
-    req.launchAfter = launchAfter_;
     req.chinese = chinese_;
-    req.preferSlim = preferSlim_;
+    req.preferSlim = preferSlim_ && runtimeAvailable_;
 
     busy_ = true;
     page_ = Page::Progress;
@@ -428,7 +705,7 @@ void App::BeginUninstall() {
 }
 
 void App::SyncWindowSize() {
-    const float scale = gfx_.dpi();
+    const float scale = gfx_.scale();
     RECT frame{0, 0, static_cast<LONG>(kWindowWidth * scale + 0.5f),
                static_cast<LONG>(contentHeight_ * scale + 0.5f)};
     const DWORD style = static_cast<DWORD>(GetWindowLongPtrW(hwnd_, GWL_STYLE));
@@ -496,14 +773,15 @@ void App::RadioRow(float x, float y, float w, bool selected, const wchar_t* titl
     }
 }
 
-void App::TextButton(const D2D1_RECT_F& r, const wchar_t* label, Hit id, bool primary) {
+void App::TextButton(const D2D1_RECT_F& r, const wchar_t* label, Hit id, bool primary, bool danger) {
     const Theme& th = gfx_.theme();
     hotspots_.push_back({id, r});
     const bool hover = hoverId_ == id;
     if (primary) {
-        gfx_.FillRounded(r, 8.0f, hover ? th.accentHover : th.accent);
-        gfx_.Text(label, r, gfx_.fonts().strong14, th.accentText, DWRITE_TEXT_ALIGNMENT_CENTER,
-                  DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
+        const D2D1_COLOR_F fill = danger ? (hover ? th.dangerHover : th.danger) : (hover ? th.accentHover : th.accent);
+        gfx_.FillRounded(r, 8.0f, fill);
+        gfx_.Text(label, r, gfx_.fonts().strong14, danger ? th.dangerText : th.accentText,
+                  DWRITE_TEXT_ALIGNMENT_CENTER, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
     } else {
         gfx_.FillRounded(r, 8.0f, hover ? th.controlHover : th.controlBg);
         gfx_.StrokeRounded(r, 8.0f, th.controlBorder);
@@ -514,50 +792,158 @@ void App::TextButton(const D2D1_RECT_F& r, const wchar_t* label, Hit id, bool pr
 
 float App::PaintHeader() {
     const Theme& th = gfx_.theme();
-    const float scale = 1.0f;
-    // 风扇标记：圆环 + 四片斜叶，和主程序图标同色系
-    const float cx = kMargin + 20.0f;
-    const float cy = 22.0f + 20.0f;
-    gfx_.FillRounded(Rect(kMargin, 22.0f, 40.0f, 40.0f), 10.0f, th.controlBg);
-    gfx_.StrokeRounded(Rect(kMargin + 0.5f, 22.5f, 39.0f, 39.0f), 10.0f, th.cardBorder);
-    gfx_.StrokeCircle(cx, cy, 11.0f * scale, Alpha(th.accent, 0.55f), 1.4f);
-    for (int i = 0; i < 4; ++i) {
-        const float angle = static_cast<float>(i) * 1.5707963f + 0.6f;
-        const float bx = cx + std::cos(angle) * 7.0f;
-        const float by = cy + std::sin(angle) * 7.0f;
-        gfx_.FillEllipse(bx, by, 4.6f, 2.6f, th.accent);
-    }
-    gfx_.FillCircle(cx, cy, 2.2f, th.accent);
+    // 应用图标，和主程序标题栏用的是同一张 ico
+    gfx_.DrawIcon(Rect(kMargin, 20.0f, 44.0f, 44.0f));
 
-    gfx_.Text(T(Str::AppName), Rect(kMargin + 54.0f, 20.0f, 260.0f, 28.0f), gfx_.fonts().title20, th.textPrimary);
-    const std::wstring sub = std::wstring(T(Str::Subtitle)) + L"  ·  " + Format(T(Str::VersionLabel), version_.c_str());
-    gfx_.Text(sub, Rect(kMargin + 54.0f, 48.0f, 360.0f, 18.0f), gfx_.fonts().small12, th.textTertiary);
-    LanguageSwitch(gfx_.width() - kMargin - 132.0f, 24.0f);
+    gfx_.Text(T(Str::AppName), Rect(kMargin + 58.0f, 20.0f, 260.0f, 28.0f), gfx_.fonts().title20, th.textPrimary);
+    const std::wstring sub = Format(T(Str::VersionLabel), version_.c_str());
+    gfx_.Text(sub, Rect(kMargin + 58.0f, 48.0f, 360.0f, 18.0f), gfx_.fonts().small12, th.textTertiary);
+    // 卸载器的语言跟随安装时保存的选择，不再提供切换。
+    if (mode_ == SetupMode::Install) LanguageSwitch(gfx_.width() - kMargin - 132.0f, 24.0f);
+    if (page_ == Page::Data) {
+        gfx_.Text(L"2 / 2", Rect(gfx_.width() - kMargin - 132.0f, 58.0f, 132.0f, 16.0f), gfx_.fonts().small12,
+                  th.textTertiary, DWRITE_TEXT_ALIGNMENT_TRAILING);
+    }
     return 84.0f;
 }
 
-float App::PaintConfigure() {
+// 居中版页首：图标 → 名称 → 版本（安装首页与卸载确认页共用）
+float App::PaintHero(float top) {
+    const Theme& th = gfx_.theme();
+    const float cx = gfx_.width() / 2.0f;
+    float y = top;
+    gfx_.DrawIcon(Rect(cx - 32.0f, y, 64.0f, 64.0f));
+    y += 64.0f + 16.0f;
+    gfx_.Text(T(Str::AppName), Rect(cx - 220.0f, y, 440.0f, 30.0f), gfx_.fonts().title20, th.textPrimary,
+              DWRITE_TEXT_ALIGNMENT_CENTER);
+    y += 30.0f + 4.0f;
+    gfx_.Text(Format(T(Str::VersionLabel), version_.c_str()), Rect(cx - 300.0f, y, 600.0f, 18.0f),
+              gfx_.fonts().small12, th.textTertiary, DWRITE_TEXT_ALIGNMENT_CENTER);
+    y += 18.0f;
+    return y;
+}
+
+float App::PaintLocation() {
+    const Theme& th = gfx_.theme();
+    const float width = gfx_.width();
+    const float w = width - kMargin * 2;
+    const float cx = width / 2.0f;
+
+    // 和第二页等高：以第二页实测高度为基准（还没画过时用默认高度），内容整组垂直居中。
+    const float pageH = dataPageHeight_ > 0.0f ? dataPageHeight_ : kPageHeight;
+
+    auto withSize = [](const std::wstring& info, uint64_t bytes) {
+        if (bytes == 0) return info;
+        return info + L"  ·  " + Format(T(Str::DiskUsage), MbText(bytes).c_str());
+    };
+    const std::wstring slimHint = withSize(T(Str::RuntimeSlimInfo), bytesSlim_);
+    const std::wstring fullHint = withSize(T(Str::RuntimeFullInfo), bytesFull_);
+    const float runtimeCardH = runtimeAvailable_ ? 140.0f : 118.0f;
+    const bool pathOk = PathValid();
+    const float installCardH = 116.0f;
+
+    // 页首整组居中：图标 → 名称 → 版本 → 语言
+    const float heroH = 64.0f + 16.0f + 30.0f + 4.0f + 18.0f + 14.0f + 28.0f;
+    const float blockH = heroH + 18.0f + runtimeCardH + 12.0f + installCardH;
+    const float footerY = std::max(pageH - 36.0f - 18.0f, blockH + 40.0f);
+    float y = std::max(20.0f, (footerY - 18.0f - blockH) / 2.0f);
+
+    // 升级只有这一页：不画步骤号，免得出现「1 / 2」却永远到不了第二页
+    if (!upgrade_) {
+        gfx_.Text(L"1 / 2", Rect(width - kMargin - 60.0f, 18.0f, 60.0f, 16.0f), gfx_.fonts().small12,
+                  th.textTertiary, DWRITE_TEXT_ALIGNMENT_TRAILING);
+    }
+    y = PaintHero(y) + 14.0f;
+    LanguageSwitch(cx - 66.0f, y);
+    y += 28.0f + 18.0f;
+
+    // 卡片 1：运行环境（检测到 .NET 8 运行时才允许选精简版，否则强制完整版）
+    Card(kMargin, y, w, runtimeCardH);
+    gfx_.Text(T(Str::SectionRuntime), Rect(kMargin + 18, y + 12, w - 36, 20), gfx_.fonts().h16, th.textPrimary);
+    if (runtimeAvailable_) {
+        RadioRow(kMargin + 12, y + 40, w - 24, preferSlim_, T(Str::RuntimeSlimName), slimHint.c_str(), Hit::PickSlim);
+        RadioRow(kMargin + 12, y + 84, w - 24, !preferSlim_, T(Str::RuntimeFullName), fullHint.c_str(),
+                 Hit::PickFull);
+    } else {
+        RadioRow(kMargin + 12, y + 40, w - 24, true, T(Str::RuntimeFullName), fullHint.c_str(), Hit::PickFull);
+        gfx_.Text(T(Str::RuntimeMissing), Rect(kMargin + 36, y + 90, w - 60, 18), gfx_.fonts().small12,
+                  th.textTertiary);
+    }
+    y += runtimeCardH + 12.0f;
+
+    // 卡片 2：安装位置（路径可直接编辑，右侧「浏览…」仅作兜底）
+    Card(kMargin, y, w, installCardH);
+    gfx_.Text(T(Str::SectionInstall), Rect(kMargin + 18, y + 12, w - 36, 20), gfx_.fonts().h16, th.textPrimary);
+    // 升级是就地覆盖原目录：位置锁定，输入框只读，也不提供「浏览…」
+    if (upgrade_) {
+        PaintPathField(kMargin + 18, y + 40, w - 36, 40);
+    } else {
+        PaintPathField(kMargin + 18, y + 40, w - 36 - 96, 40);
+        TextButton(Rect(kMargin + w - 18 - 84, y + 40, 84, 40), T(Str::Browse), Hit::BrowseInstall, false);
+    }
+    if (!pathOk) {
+        gfx_.Text(T(Str::PathInvalid), Rect(kMargin + 18, y + 88, w - 36, 18), gfx_.fonts().small12, th.danger);
+    } else if (upgrade_) {
+        const std::wstring note = installedVersion_.empty()
+                                      ? std::wstring(T(Str::UpgradeDetectedNoVer))
+                                      : Format(T(Str::UpgradeDetected), installedVersion_.c_str());
+        gfx_.PushClip(Rect(kMargin + 18, y + 88, w - 36, 18));
+        gfx_.Text(note, Rect(kMargin + 18, y + 88, w - 36, 18), gfx_.fonts().small12, th.accent);
+        gfx_.PopClip();
+    }
+    y += installCardH;
+
+    PaintFooter(footerY, upgrade_ ? T(Str::UpgradeAction) : T(Str::NextAction), Hit::Primary,
+                T(Str::CancelAction), true);
+    return footerY + 36.0f + 18.0f;
+}
+
+float App::PaintDataPage() {
     const Theme& th = gfx_.theme();
     const float w = gfx_.width() - kMargin * 2;
     float y = PaintHeader();
 
-    // 卡片 1：安装位置
-    Card(kMargin, y, w, 88.0f);
-    gfx_.Text(T(Str::SectionInstall), Rect(kMargin + 18, y + 12, w - 36, 20), gfx_.fonts().h16, th.textPrimary);
-    const D2D1_RECT_F pathBox = Rect(kMargin + 18, y + 38, w - 36 - 100, 20);
-    gfx_.PushClip(pathBox);
-    gfx_.Text(installDir_, pathBox, gfx_.fonts().body14, th.textSecondary);
-    gfx_.PopClip();
-    std::wstring hint = T(preferSlim_ ? Str::RuntimeSlim : Str::RuntimeFull);
-    if (payloadBytes_ > 0) hint += L"  ·  " + Format(T(Str::DiskUsage), MbText(payloadBytes_).c_str());
-    gfx_.Text(hint, Rect(kMargin + 18, y + 60, w - 36 - 100, 18), gfx_.fonts().small12, th.textTertiary);
-    TextButton(Rect(kMargin + w - 18 - 84, y + 23, 84, 28), T(Str::Change), Hit::ChangeDir, false);
-    y += 88.0f + 12.0f;
+    // 卡片 1：选项（开机自启、桌面快捷方式）
+    struct Option {
+        Str  label;
+        bool on;
+        Hit  id;
+        Str  hint;   // Count 表示没有副标题
+    };
+    const Option options[3] = {
+        {Str::OptAutostart, autostart_, Hit::OptAutostart, Str::OptAutostartHint},
+        {Str::OptDesktop, desktopShortcut_, Hit::OptDesktop, Str::Count},
+        {Str::OptStartMenu, startMenuShortcut_, Hit::OptStartMenu, Str::Count},
+    };
+    constexpr float kRowH = 40.0f;
+    constexpr float kRowHintH = 58.0f;
+    float optContentH = 0.0f;
+    for (const Option& opt : options) optContentH += (opt.hint != Str::Count ? kRowHintH : kRowH);
+    const float optionsH = 42.0f + optContentH + 8.0f;
+    Card(kMargin, y, w, optionsH);
+    gfx_.Text(T(Str::SectionOptions), Rect(kMargin + 18, y + 12, w - 36, 20), gfx_.fonts().h16, th.textPrimary);
+    float optY = y + 42.0f;
+    for (const Option& opt : options) {
+        const bool hasHint = opt.hint != Str::Count;
+        const float rowH = hasHint ? kRowHintH : kRowH;
+        const D2D1_RECT_F row = Rect(kMargin + 12, optY, w - 24, rowH);
+        hotspots_.push_back({opt.id, row});
+        if (hoverId_ == opt.id) gfx_.FillRounded(row, 8.0f, Alpha(th.controlBg, 0.6f));
+        const float labelY = optY + (hasHint ? 8.0f : (rowH - 18.0f) / 2.0f);
+        gfx_.Text(T(opt.label), Rect(kMargin + 24, labelY, w - 24 - 80, 18), gfx_.fonts().body14, th.textPrimary);
+        if (hasHint) {
+            gfx_.Text(T(opt.hint), Rect(kMargin + 24, labelY + 21.0f, w - 24 - 80, 16), gfx_.fonts().small12,
+                      th.textTertiary);
+        }
+        ToggleChip(kMargin + w - 18 - 40, labelY - 2.0f, opt.on);
+        optY += rowH;
+    }
+    y += optionsH + 12.0f;
 
-    // 卡片 2：数据存储
+    // 卡片 2：配置与日志位置（整页的核心决定）
     const bool customPicked = (dataMode_ == DataMode::Custom);
     const float hintH = existingConfig_ ? 18.0f : 0.0f;
-    float rowsTop = 58.0f;
+    const float rowsTop = 58.0f;
     const float customRowH = customPicked ? 44.0f : 0.0f;
     const float cardH = rowsTop + 132.0f + customRowH + hintH + 12.0f;
     Card(kMargin, y, w, cardH);
@@ -588,49 +974,178 @@ float App::PaintConfigure() {
     if (existingConfig_) {
         gfx_.Text(T(Str::ExistingConfig), Rect(kMargin + 18, rowY + 4, w - 36, 18), gfx_.fonts().small12, th.accent);
     }
-    y += cardH + 12.0f;
+    y += cardH + 18.0f;
 
-    // 卡片 3：选项
-    Card(kMargin, y, w, 166.0f);
-    gfx_.Text(T(Str::SectionOptions), Rect(kMargin + 18, y + 12, w - 36, 20), gfx_.fonts().h16, th.textPrimary);
-    struct Option {
-        Str  label;
-        bool on;
-        Hit  id;
-        Str  hint;   // Count 表示没有副标题
-    };
-    const Option options[3] = {
-        {Str::OptDesktop, desktopShortcut_, Hit::OptDesktop, Str::Count},
-        {Str::OptAutostart, autostart_, Hit::OptAutostart, Str::OptAutostartHint},
-        {Str::OptLaunch, launchAfter_, Hit::OptLaunch, Str::Count},
-    };
-    float optY = y + 42.0f;
-    for (const Option& opt : options) {
-        const D2D1_RECT_F row = Rect(kMargin + 12, optY, w - 24, 40.0f);
-        hotspots_.push_back({opt.id, row});
-        if (hoverId_ == opt.id) gfx_.FillRounded(row, 8.0f, Alpha(th.controlBg, 0.6f));
-        const bool hasHint = opt.hint != Str::Count;
-        gfx_.Text(T(opt.label), Rect(kMargin + 24, optY + (hasHint ? 3.0f : 2.0f), w - 24 - 80, 18),
-                  gfx_.fonts().body14, th.textPrimary);
-        if (hasHint) {
-            gfx_.Text(T(opt.hint), Rect(kMargin + 24, optY + 21.0f, w - 24 - 80, 16), gfx_.fonts().small12,
-                      th.textTertiary);
-        }
-        ToggleChip(kMargin + w - 18 - 40, optY + (hasHint ? 9.0f : 9.0f), opt.on);
-        optY += 40.0f;
+    Checkbox(kMargin + 2.0f, y + 9.0f, T(Str::OptLaunch), launchAfter_, Hit::OptLaunch);
+    PaintFooter(y, upgrade_ ? T(Str::UpgradeAction) : T(Str::InstallAction), Hit::Primary, T(Str::BackAction));
+    dataPageHeight_ = y + 36.0f + 20.0f;   // 首页按这个高度排版，两页窗口大小一致
+    return dataPageHeight_;
+}
+
+void App::PaintPathField(float x, float y, float w, float h) {
+    const Theme& th = gfx_.theme();
+    const D2D1_RECT_F field = Rect(x, y, w, h);
+    // 升级页面路径锁定：不登记热区、不画光标，点击与键盘输入都落不到这里
+    const bool editable = !upgrade_;
+    if (editable) hotspots_.push_back({Hit::PathField, field});
+    pathFieldRect_ = field;   // 点击换算文字索引要用这一帧的实际位置
+
+    const bool invalid = !PathValid();
+    const bool focused = pathFocused_ && editable;
+    gfx_.FillRounded(field, 8.0f, editable ? th.controlBg : Alpha(th.controlBg, 0.6f));
+    const D2D1_COLOR_F border = focused ? th.accent : (invalid ? Alpha(th.danger, 0.8f) : th.controlBorder);
+    gfx_.StrokeRounded(Rect(x + 0.5f, y + 0.5f, w - 1.0f, h - 1.0f), 8.0f, border, focused ? 1.6f : 1.0f);
+
+    const float padX = 12.0f;
+    const float avail = w - padX * 2.0f;
+    const size_t caret = caret_ < installDir_.size() ? caret_ : installDir_.size();
+    const float caretX = gfx_.Measure(installDir_.substr(0, caret), gfx_.fonts().body14);
+    const float offset = caretX > avail - 6.0f ? caretX - (avail - 6.0f) : 0.0f;
+    pathScroll_ = offset;
+
+    const D2D1_RECT_F textBox = Rect(x + padX - offset, y + (h - 18.0f) / 2.0f, 4000.0f, 18.0f);
+    gfx_.PushClip(Rect(x + 2.0f, y + 2.0f, w - 4.0f, h - 4.0f));
+    if (focused && HasPathSelection()) {
+        const float left = gfx_.Measure(installDir_.substr(0, PathSelBegin()), gfx_.fonts().body14);
+        const float right = gfx_.Measure(installDir_.substr(0, PathSelEnd()), gfx_.fonts().body14);
+        gfx_.FillRounded(Rect(x + padX - offset + left, y + 9.0f, right - left, h - 18.0f), 3.0f,
+                         Alpha(th.accent, 0.35f));
     }
-    y += 166.0f;
+    gfx_.Text(installDir_, textBox, gfx_.fonts().body14, th.textPrimary);
+    if (focused && caretOn_ && !HasPathSelection()) {
+        const float cx = x + padX + caretX - offset;
+        gfx_.DrawLine(cx, y + h / 2 - 9.0f, cx, y + h / 2 + 9.0f, th.textPrimary, 1.4f);
+    }
+    gfx_.PopClip();
+}
 
-    const float footerY = y + 16.0f;
-    PaintFooter(footerY, T(Str::InstallAction), Hit::Primary, T(Str::CancelAction));
-    return footerY + 36.0f + 20.0f;
+void App::FocusPath(bool on) {
+    if (upgrade_ && on) return;   // 升级页面路径锁定，不接受焦点
+    if (pathFocused_ == on) return;
+    pathFocused_ = on;
+    caretOn_ = true;
+    if (on) {
+        SetTimer(hwnd_, 1, 530, nullptr);
+        caret_ = installDir_.size();
+        selAnchor_ = caret_;
+        selecting_ = false;
+    } else {
+        KillTimer(hwnd_, 1);
+        CommitPath();
+    }
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+void App::InsertText(const std::wstring& text) {
+    (void)DeletePathSelection();   // 有选区时输入即替换
+    if (caret_ > installDir_.size()) caret_ = installDir_.size();
+    installDir_.insert(caret_, text);
+    caret_ += text.size();
+    selAnchor_ = caret_;
+    caretOn_ = true;
+    RefreshExistingConfig();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+void App::CommitPath() {
+    std::wstring p = StripSeparators(installDir_);
+    if (p.empty()) p = StripSeparators(DefaultInstallDir());
+    installDir_ = p;
+    caret_ = installDir_.size();
+    selAnchor_ = caret_;
+    RefreshExistingConfig();
+}
+
+// extend=true 时保留原有选区另一端（按住 Shift 或鼠标拖选）。
+void App::SetCaretPos(size_t pos, bool extend) {
+    if (pos > installDir_.size()) pos = installDir_.size();
+    caret_ = pos;
+    if (!extend) selAnchor_ = pos;
+    caretOn_ = true;
+    if (pathFocused_) {
+        KillTimer(hwnd_, 1);
+        SetTimer(hwnd_, 1, 530, nullptr);
+        InvalidateRect(hwnd_, nullptr, FALSE);
+    }
+}
+
+void App::SelectAllPath() {
+    selAnchor_ = 0;
+    caret_ = installDir_.size();
+    caretOn_ = true;
+    InvalidateRect(hwnd_, nullptr, FALSE);
+}
+
+bool App::DeletePathSelection() {
+    if (!HasPathSelection()) return false;
+    const size_t begin = PathSelBegin();
+    installDir_.erase(begin, PathSelEnd() - begin);
+    caret_ = begin;
+    selAnchor_ = begin;
+    RefreshExistingConfig();
+    InvalidateRect(hwnd_, nullptr, FALSE);
+    return true;
+}
+
+// 水平坐标 → 字符索引：以每个字符左右边界的中间点为界，点哪半边就落在哪。
+size_t App::PathIndexAtX(float relX) {
+    if (relX <= 0.0f) return 0;
+    const size_t len = installDir_.size();
+    float prev = 0.0f;
+    for (size_t i = 1; i <= len; ++i) {
+        const float cur = gfx_.Measure(installDir_.substr(0, i), gfx_.fonts().body14);
+        if (relX < (prev + cur) / 2.0f) return i - 1;
+        prev = cur;
+    }
+    return len;
+}
+
+std::wstring App::SelectedPathText() const {
+    if (!HasPathSelection()) return std::wstring();
+    return installDir_.substr(PathSelBegin(), PathSelEnd() - PathSelBegin());
+}
+
+bool App::PathValid() const {
+    const std::wstring& p = installDir_;
+    if (p.size() < 3) return false;
+    const wchar_t c0 = p[0];
+    const bool letter = (c0 >= L'A' && c0 <= L'Z') || (c0 >= L'a' && c0 <= L'z');
+    bool ok = letter && p[1] == L':' && (p[2] == L'\\' || p[2] == L'/');
+    if (!ok && p.size() >= 2 && p[0] == L'\\' && p[1] == L'\\') ok = true;
+    if (!ok) return false;
+    for (const wchar_t c : p) {
+        if (c < 32) return false;
+        if (c == L'<' || c == L'>' || c == L'|' || c == L'"' || c == L'?' || c == L'*') return false;
+    }
+    return true;
+}
+
+void App::Checkbox(float x, float y, const wchar_t* label, bool on, Hit id) {
+    const Theme& th = gfx_.theme();
+    constexpr float kBox = 18.0f;
+    const D2D1_RECT_F box = Rect(x, y, kBox, kBox);
+    hotspots_.push_back({id, Rect(x - 4.0f, y - 9.0f, kBox + 260.0f, 36.0f)});
+    if (on) {
+        gfx_.FillRounded(box, 5.0f, hoverId_ == id ? th.accentHover : th.accent);
+        gfx_.DrawLine(x + 4.4f, y + 9.4f, x + 7.4f, y + 12.6f, th.accentText, 1.8f);
+        gfx_.DrawLine(x + 7.4f, y + 12.6f, x + 13.6f, y + 5.4f, th.accentText, 1.8f);
+    } else {
+        gfx_.StrokeRounded(box, 5.0f, hoverId_ == id ? th.textTertiary : th.controlBorder, 1.2f);
+    }
+    gfx_.Text(label, Rect(x + kBox + 10.0f, y - 2.0f, 400.0f, 22.0f), gfx_.fonts().body14, th.textSecondary,
+              DWRITE_TEXT_ALIGNMENT_LEADING, DWRITE_PARAGRAPH_ALIGNMENT_CENTER);
 }
 
 float App::PaintProgress(const wchar_t* title) {
     const Theme& th = gfx_.theme();
     const float w = gfx_.width() - kMargin * 2;
-    const float y = PaintHeader();
+    // 卸载器全程用居中页首，和确认页保持一套版式。
+    const float top = (mode_ == SetupMode::Uninstall) ? PaintHero(20.0f) + 18.0f : PaintHeader();
     const bool failed = !error_.empty() && !busy_;
+    // 所有页面统一用 kPageHeight：进度页内容少，就把卡片在页首与页脚之间居中。
+    const float footerY = kPageHeight - 36.0f - 18.0f;
+    const float y = failed ? (top + std::max(0.0f, (footerY - 18.0f - top - 108.0f) / 2.0f))
+                           : (top + std::max(0.0f, (kPageHeight - top - 108.0f) / 2.0f));
     Card(kMargin, y, w, 108.0f);
     gfx_.Text(title, Rect(kMargin + 18, y + 14, w - 36, 26), gfx_.fonts().title20, th.textPrimary);
     if (failed) {
@@ -638,8 +1153,8 @@ float App::PaintProgress(const wchar_t* title) {
         gfx_.PushClip(Rect(kMargin + 18, y + 46, w - 36, 44));
         gfx_.Text(msg, Rect(kMargin + 18, y + 46, w - 36, 44), gfx_.fonts().body14, th.danger);
         gfx_.PopClip();
-        PaintFooter(y + 108.0f + 16.0f, T(Str::FinishAction), Hit::Primary, nullptr);
-        return y + 108.0f + 16.0f + 36.0f + 20.0f;
+        PaintFooter(footerY, T(Str::FinishAction), Hit::Primary, nullptr, true);
+        return kPageHeight;
     }
     gfx_.Text(status_, Rect(kMargin + 18, y + 46, w - 36, 20), gfx_.fonts().body14, th.textSecondary);
     const float barW = w - 36.0f;
@@ -648,18 +1163,21 @@ float App::PaintProgress(const wchar_t* title) {
     if (fill > 1.0f) gfx_.FillRounded(Rect(kMargin + 18, y + 74, fill, 8.0f), 4.0f, th.accent);
     gfx_.Text(Format(L"%d%%", percent_), Rect(kMargin + 18, y + 86, barW, 18), gfx_.fonts().small12,
               th.textTertiary, DWRITE_TEXT_ALIGNMENT_TRAILING);
-    return y + 108.0f + 24.0f;
+    return kPageHeight;
 }
 
 float App::PaintDone(const wchar_t* title, const wchar_t* subtitle, bool uninstall) {
     const Theme& th = gfx_.theme();
     const float w = gfx_.width() - kMargin * 2;
-    float y = PaintHeader();
+    const float top = (mode_ == SetupMode::Uninstall) ? PaintHero(20.0f) + 18.0f : PaintHeader();
 
     const std::wstring dataRoot =
-        uninstall ? dataRoot_ : ResolveDataRoot(dataMode_, installDir_, customDir_);
+        uninstall ? dataRoot_ : ResolveDataRoot(dataMode_, InstallTargetDir(), customDir_);
     const float rowsTop = 100.0f;
     const float cardH = rowsTop + (uninstall ? 50.0f : 120.0f) + 10.0f;
+    // 和进度页一样：窗口高度固定，卡片在页脚之上居中。
+    const float footerY = kPageHeight - 36.0f - 18.0f;
+    float y = top + std::max(0.0f, (footerY - 18.0f - top - cardH) / 2.0f);
     Card(kMargin, y, w, cardH);
 
     gfx_.FillCircle(kMargin + 34, y + 40, 15.0f, Alpha(th.ok, 0.18f));
@@ -680,7 +1198,7 @@ float App::PaintDone(const wchar_t* title, const wchar_t* subtitle, bool uninsta
     if (uninstall) {
         rows.push_back({T(Str::SumData), dataRoot});
     } else {
-        rows.push_back({T(Str::SumInstall), installDir_});
+        rows.push_back({T(Str::SumInstall), InstallTargetDir()});
         rows.push_back({T(Str::SumData), dataRoot});
         rows.push_back({T(Str::SumLanguage), chinese_ ? L"\u4e2d\u6587" : L"English"});
     }
@@ -692,17 +1210,20 @@ float App::PaintDone(const wchar_t* title, const wchar_t* subtitle, bool uninsta
         gfx_.PopClip();
         ry += 40.0f;
     }
-    y += cardH + 16.0f;
-    PaintFooter(y, T(Str::FinishAction), Hit::Primary, nullptr);
-    return y + 36.0f + 20.0f;
+    PaintFooter(footerY, T(Str::FinishAction), Hit::Primary, nullptr, true);
+    return kPageHeight;
 }
 
 float App::PaintConfirm() {
     const Theme& th = gfx_.theme();
     const float w = gfx_.width() - kMargin * 2;
-    float y = PaintHeader();
+    const float heroBottom = PaintHero(20.0f);
 
+    // 和安装页同宽同高：卡片在页首与页脚之间垂直居中。
     const float cardH = 200.0f;
+    const float footerY = kPageHeight - 36.0f - 18.0f;
+    const float cardTop = heroBottom + 18.0f;
+    float y = cardTop + std::max(0.0f, (footerY - 18.0f - cardTop - cardH) / 2.0f);
     Card(kMargin, y, w, cardH);
     gfx_.Text(T(Str::ConfirmUninstall), Rect(kMargin + 18, y + 16, w - 36, 28), gfx_.fonts().title20,
               th.textPrimary);
@@ -725,22 +1246,26 @@ float App::PaintConfirm() {
     gfx_.Text(deleteData_ ? std::wstring(T(Str::DeleteDataHint)) : kept, Rect(kMargin + 24, y + 160, w - 48, 30),
               gfx_.fonts().small12, deleteData_ ? th.danger : th.textTertiary);
     gfx_.PopClip();
-    y += cardH + 16.0f;
-    PaintFooter(y, T(Str::UninstallAction), Hit::Primary, T(Str::CancelAction));
-    return y + 36.0f + 20.0f;
+    PaintFooter(footerY, T(Str::UninstallAction), Hit::Primary, T(Str::CancelAction), true, true);
+    return footerY + 36.0f + 18.0f;
 }
 
-void App::PaintFooter(float y, const wchar_t* primary, Hit primaryHit, const wchar_t* secondary) {
+void App::PaintFooter(float y, const wchar_t* primary, Hit primaryHit, const wchar_t* secondary,
+                       bool centered, bool danger) {
     const float w = gfx_.width() - kMargin * 2;
     const float primaryW = 104.0f;
-    const D2D1_RECT_F primaryRect = Rect(kMargin + w - primaryW, y, primaryW, 36.0f);
-    bool showPrimary = (primary != nullptr);
-    if (secondary) {
-        const float secondaryW = 88.0f;
-        TextButton(Rect(kMargin + w - primaryW - 10.0f - secondaryW, y, secondaryW, 36.0f), secondary,
-                   Hit::Secondary, false);
+    const float secondaryW = 88.0f;
+    float primaryX = kMargin + w - primaryW;
+    float secondaryX = primaryX - 10.0f - secondaryW;
+    if (centered) {
+        const float total = secondary ? primaryW + 10.0f + secondaryW : primaryW;
+        secondaryX = gfx_.width() / 2.0f - total / 2.0f;
+        primaryX = secondaryX + (secondary ? secondaryW + 10.0f : 0.0f);
     }
-    if (showPrimary) TextButton(primaryRect, primary, primaryHit, true);
+    if (secondary) {
+        TextButton(Rect(secondaryX, y, secondaryW, 36.0f), secondary, Hit::Secondary, false);
+    }
+    if (primary) TextButton(Rect(primaryX, y, primaryW, 36.0f), primary, primaryHit, true, danger);
 }
 
 bool App::Paint() {
@@ -750,16 +1275,20 @@ bool App::Paint() {
     float height = 0.0f;
     switch (page_) {
     case Page::Configure:
-        height = PaintConfigure();
+        height = PaintLocation();
+        break;
+    case Page::Data:
+        height = PaintDataPage();
         break;
     case Page::Progress:
-        height = PaintProgress(T(Str::ProgressInstall));
+        height = PaintProgress(upgrade_ ? T(Str::ProgressUpgrade) : T(Str::ProgressInstall));
         break;
     case Page::UninstallProgress:
         height = PaintProgress(T(Str::ProgressUninstall));
         break;
     case Page::Done:
-        height = PaintDone(T(Str::DoneTitle), T(Str::DoneSubtitle), false);
+        height = upgrade_ ? PaintDone(T(Str::DoneTitleUpgrade), T(Str::DoneSubtitleUpgrade), false)
+                          : PaintDone(T(Str::DoneTitle), T(Str::DoneSubtitle), false);
         break;
     case Page::UninstallDone:
         height = PaintDone(T(Str::UninstallDoneTitle), T(Str::UninstallDoneSubtitle), true);
@@ -768,7 +1297,9 @@ bool App::Paint() {
         height = PaintConfirm();
         break;
     }
-    contentHeight_ = height;
+    // 窗口高度取整页基准：进度/完成页内容少也不会把窗口缩矮。
+    contentHeight_ = std::max(kPageHeight, height);
+    height = contentHeight_;
     gfx_.End();
     if (!sized_ || std::fabs(height - lastHeight_) > 0.5f) {
         lastHeight_ = height;

@@ -22,6 +22,11 @@ bool Gfx::Init(HWND hwnd, ID2D1Factory* d2d, IDWriteFactory* dw) {
 
 void Gfx::Shutdown() {
     DropTarget();
+    if (wic_) {
+        wic_->Release();
+        wic_ = nullptr;
+    }
+    iconSrc_ = nullptr;
     fonts_.Release();
     dw_ = nullptr;
     d2d_ = nullptr;
@@ -31,6 +36,10 @@ void Gfx::Shutdown() {
 void Gfx::DropTarget() {
     for (auto& entry : brushes_) entry.second->Release();
     brushes_.clear();
+    if (icon_) {
+        icon_->Release();
+        icon_ = nullptr;
+    }
     if (rt_) {
         rt_->Release();
         rt_ = nullptr;
@@ -41,24 +50,26 @@ bool Gfx::CreateTarget() {
     if (!d2d_ || !hwnd_) return false;
     RECT rc{};
     GetClientRect(hwnd_, &rc);
-    const float scale = GetDpiForWindow(hwnd_) / 96.0f;
-    dpi_ = scale > 0.0f ? scale : 1.0f;
+    const float dpiScale = GetDpiForWindow(hwnd_) / 96.0f;
+    dpi_ = dpiScale > 0.0f ? dpiScale : 1.0f;
     const D2D1_SIZE_U size = D2D1::SizeU(static_cast<UINT32>(std::max<LONG>(1, rc.right - rc.left)),
                                          static_cast<UINT32>(std::max<LONG>(1, rc.bottom - rc.top)));
+    // 设计坐标按 scale()（DPI × 界面缩放）折算：rt 的 DPI 放大小于 96 就整体变小。
+    const float effective = scale();
     if (!rt_) {
         D2D1_RENDER_TARGET_PROPERTIES props = D2D1::RenderTargetProperties();
         // 软件光栅：安装器只是几块卡片和一行进度条，硬件管线要多背几十 MB 显存和驱动线程。
         props.type = D2D1_RENDER_TARGET_TYPE_SOFTWARE;
-        props.dpiX = 96.0f * dpi_;
-        props.dpiY = 96.0f * dpi_;
+        props.dpiX = 96.0f * effective;
+        props.dpiY = 96.0f * effective;
         const D2D1_HWND_RENDER_TARGET_PROPERTIES hwndProps = D2D1::HwndRenderTargetProperties(hwnd_, size);
         if (FAILED(d2d_->CreateHwndRenderTarget(props, hwndProps, &rt_))) return false;
     } else {
-        rt_->SetDpi(96.0f * dpi_, 96.0f * dpi_);
+        rt_->SetDpi(96.0f * effective, 96.0f * effective);
         rt_->Resize(size);
     }
-    width_ = static_cast<float>(size.width) / dpi_;
-    height_ = static_cast<float>(size.height) / dpi_;
+    width_ = static_cast<float>(size.width) / effective;
+    height_ = static_cast<float>(size.height) / effective;
     return true;
 }
 
@@ -67,12 +78,13 @@ void Gfx::Resize(UINT pixelWidth, UINT pixelHeight) {
         CreateTarget();
         return;
     }
-    const float scale = GetDpiForWindow(hwnd_) / 96.0f;
-    dpi_ = scale > 0.0f ? scale : 1.0f;
-    rt_->SetDpi(96.0f * dpi_, 96.0f * dpi_);
+    const float dpiScale = GetDpiForWindow(hwnd_) / 96.0f;
+    dpi_ = dpiScale > 0.0f ? dpiScale : 1.0f;
+    const float effective = scale();
+    rt_->SetDpi(96.0f * effective, 96.0f * effective);
     rt_->Resize(D2D1::SizeU(std::max<UINT>(1, pixelWidth), std::max<UINT>(1, pixelHeight)));
-    width_ = static_cast<float>(std::max<UINT>(1, pixelWidth)) / dpi_;
-    height_ = static_cast<float>(std::max<UINT>(1, pixelHeight)) / dpi_;
+    width_ = static_cast<float>(std::max<UINT>(1, pixelWidth)) / effective;
+    height_ = static_cast<float>(std::max<UINT>(1, pixelHeight)) / effective;
 }
 
 bool Gfx::Begin(const D2D1_COLOR_F& clearColor) {
@@ -91,6 +103,56 @@ bool Gfx::End() {
         return CreateTarget();
     }
     return SUCCEEDED(hr);
+}
+
+void Gfx::LoadIcon(HICON icon) {
+    iconSrc_ = icon;
+    BuildIconBitmap();
+}
+
+bool Gfx::BuildIconBitmap() {
+    if (!iconSrc_ || !rt_) {
+        iconError_ = E_FAIL;
+        return false;
+    }
+    if (!wic_) {
+        const HRESULT hr = CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER,
+                                            IID_PPV_ARGS(&wic_));
+        if (FAILED(hr)) {
+            iconError_ = hr;
+            return false;
+        }
+    }
+    IWICBitmap* bitmap = nullptr;
+    HRESULT hr = wic_->CreateBitmapFromHICON(iconSrc_, &bitmap);
+    if (FAILED(hr) || !bitmap) {
+        iconError_ = hr;
+        return false;
+    }
+    // 图标位图常见是 32bppBGR（无 alpha）或 24bpp，D2D 不认，先统一转成 32bppPBGRA。
+    IWICFormatConverter* conv = nullptr;
+    hr = wic_->CreateFormatConverter(&conv);
+    if (SUCCEEDED(hr) && conv) {
+        hr = conv->Initialize(bitmap, GUID_WICPixelFormat32bppPBGRA, WICBitmapDitherTypeNone, nullptr, 0.0,
+                              WICBitmapPaletteTypeCustom);
+    }
+    if (SUCCEEDED(hr) && conv) {
+        hr = rt_->CreateBitmapFromWicBitmap(conv, nullptr, &icon_);
+    }
+    if (conv) conv->Release();
+    bitmap->Release();
+    if (FAILED(hr) || !icon_) {
+        iconError_ = hr;
+        return false;
+    }
+    return true;
+}
+
+void Gfx::DrawIcon(const D2D1_RECT_F& r) {
+    if (!rt_) return;
+    if (!icon_ && iconSrc_) BuildIconBitmap();
+    if (!icon_) return;
+    rt_->DrawBitmap(icon_, r, 1.0f, D2D1_BITMAP_INTERPOLATION_MODE_LINEAR);
 }
 
 ID2D1SolidColorBrush* Gfx::Brush(const D2D1_COLOR_F& color) {

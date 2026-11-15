@@ -17,44 +17,50 @@ public sealed record BleDeviceInfo(string Name, string MacAddress)
 /// <summary>
 /// BLE 设备枚举（UI 下拉列表与后台通道共用）：
 /// 以 MAC 地址作为设备定位主键，名称仅用于显示。
-/// 实现改为 SetupAPI + BTHPORT 注册表（见 <see cref="BluetoothLeInterop"/>），不再依赖 WinRT 投影。
+/// 枚举本身走 FanControl.Ble.dll（C++/WinRT），此处只解析 "名称\tMAC" 行文本。
 /// </summary>
 public static class BleDeviceScanner
 {
     /// <summary>枚举全部已配对的 BLE 设备；无蓝牙适配器或权限不足时返回空列表。</summary>
-    public static async Task<IReadOnlyList<BleDeviceInfo>> EnumerateAsync(
-        CancellationToken cancellationToken = default)
+    public static Task<IReadOnlyList<BleDeviceInfo>> EnumerateAsync(CancellationToken cancellationToken = default)
+    {
+        return Task.Run(() => Parse(BleNative.Scan()), cancellationToken);
+    }
+
+    private static IReadOnlyList<BleDeviceInfo> Parse(string text)
     {
         var results = new List<BleDeviceInfo>();
-
-        IReadOnlyList<BleDeviceInterface> interfaces;
-        try
+        if (string.IsNullOrWhiteSpace(text))
         {
-            interfaces = await Task.Run(BluetoothLeInterop.EnumerateDevices, cancellationToken);
-        }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch
-        {
-            return results; // 蓝牙不可用（无适配器 / 权限不足）
+            return results;
         }
 
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var item in interfaces)
+        foreach (var rawLine in text.Split('\n'))
         {
-            if (string.IsNullOrWhiteSpace(item.MacAddress) && string.IsNullOrWhiteSpace(item.Name))
+            var line = rawLine.TrimEnd('\r');
+            if (line.Length == 0)
             {
-                continue; // 既无 MAC 又无名称：无法在界面上定位
+                continue;
             }
 
-            if (!string.IsNullOrWhiteSpace(item.MacAddress) && !seen.Add(item.MacAddress))
+            var separator = line.IndexOf('\t');
+            var name = separator < 0 ? line : line[..separator];
+            var mac = separator < 0 ? string.Empty : line[(separator + 1)..];
+            name = name.Trim();
+            mac = mac.Trim();
+
+            if (name.Length == 0 && mac.Length == 0)
             {
-                continue; // 同一个设备可能暴露多个接口（例如不同实例）
+                continue;
             }
 
-            results.Add(new BleDeviceInfo(item.Name ?? string.Empty, item.MacAddress));
+            if (mac.Length > 0 && !seen.Add(mac))
+            {
+                continue;
+            }
+
+            results.Add(new BleDeviceInfo(name, mac));
         }
 
         return results

@@ -527,13 +527,8 @@ public sealed class FanControlRuntime : IAsyncDisposable
     }
 
     /// <summary>
-    /// 通信循环（仅蓝牙）：互斥型轮询 —— 已连接按 1-30 秒发送 PWM；
-    /// 未连接按 3-300 秒尝试重连（可关闭）。串口由采样循环负责，此处仅空转。
-    /// </summary>
-    /// <summary>
-    /// 通信循环：COM 与 BLE 统一复用同一套轮询时间——
-    /// 已连接按 BlePollIntervalSeconds 发送 PWM+温度+首次下发时间；
-    /// 未连接按 BleReconnectIntervalSeconds 尝试重连（BLE 受自动重连开关控制，COM 始终重连）。
+    /// 通信循环（串口与蓝牙共用）：已连接按连接轮询间隔（BlePollIntervalSeconds，1–30 秒）发送 PWM+温度+首次下发时间；
+    /// 未连接按重连间隔（BleReconnectIntervalSeconds，1–60 秒，指数退避有上限）尝试重连，是否重连由「自动重连」开关决定（两种方式都受控）。
     /// </summary>
     private async Task RunCommunicationLoopAsync(CancellationToken cancellationToken)
     {

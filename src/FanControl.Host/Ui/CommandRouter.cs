@@ -67,10 +67,23 @@ internal sealed class CommandRouter : IAsyncDisposable
 
     public void Start()
     {
+        // 托盘菜单也能切换自启：订阅广播，让设置页的开关立刻跟上
+        AutostartManager.StateChanged += OnAutostartStateChanged;
         _ = Task.Run(RefreshAutostartAsync);
         // 先把 token 取出来再进 lambda：CTS 若在任务被调度前就释放，闭包里取 Token 会抛
         var token = _cts.Token;
         _pushLoop = Task.Run(() => PushLoopAsync(token));
+    }
+
+    private void OnAutostartStateChanged(bool enabled)
+    {
+        if (_autostart == enabled)
+        {
+            return;
+        }
+
+        _autostart = enabled;
+        PushSnapshot();
     }
 
     /// <summary>界面刚打开时先给一帧完整快照。</summary>

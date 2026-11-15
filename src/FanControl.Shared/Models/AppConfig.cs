@@ -66,24 +66,34 @@ public sealed record AppConfig
     // 风扇转速平滑开关：关闭时（含手动模式）PWM 直接取目标值，不做平滑
     public bool SmoothingEnabled { get; init; } = true;
 
+    // 默认曲线取 1.4.0 现场调试出来的那条（温度 °C → PWM %，9 个点）
     public IReadOnlyList<CurvePoint> Curve { get; init; } =
         new List<CurvePoint>
         {
-            new(30, 20),
-            new(50, 35),
-            new(70, 60),
-            new(90, 100),
+            new(0.3, 21.2),
+            new(16.9, 21.2),
+            new(35.3, 24.3),
+            new(46.5, 33.6),
+            new(53.5, 51.3),
+            new(64.4, 65.5),
+            new(78.7, 71.3),
+            new(97.7, 73.0),
+            new(119.7, 75.4),
         };
 
     // 转速-PWM 曲线（X = RPM 0-10000，Y = PWM%）
+    // 默认转速曲线同样取现场调试值（RPM → PWM %）
     public IReadOnlyList<RpmCurvePoint> RpmCurve { get; init; } =
         new List<RpmCurvePoint>
         {
-            new(0, 0),
-            new(2000, 25),
-            new(4000, 45),
-            new(6000, 65),
-            new(8000, 85),
-            new(10000, 100),
+            new(87, 25.5),
+            new(1753, 26.1),
+            new(3247, 31.0),
+            new(4177, 40.0),
+            new(4719, 57.4),
+            new(5390, 69.0),
+            new(6407, 75.1),
+            new(8247, 76.5),
+            new(9957, 77.1),
         };
 }

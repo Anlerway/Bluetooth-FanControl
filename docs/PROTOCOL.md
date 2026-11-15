@@ -10,7 +10,8 @@
   - `TIME:yyyy/MM/dd HH:mm:ss` —— 校时；
   - `CPU<度数>` / `GPU<度数>` —— 供 OLED 显示的温度。
 - 当前实现只写入、**不消费 TX 通知**：订阅失败只记警告，不影响风扇控制。
-- Windows 侧实现见 `FanControl.Service/Communication/BluetoothLeInterop.cs`（Win32 `bluetoothleapis`）。
+- Windows 侧实现见 `FanControl.Service/Communication/BleChannel.cs`（WinRT `Windows.Devices.Bluetooth`；
+  Win32 `bluetoothleapis` 在本机写特征恒返回 `ERROR_INVALID_FUNCTION`，已弃用）。
 
 ## 串口（Service ↔ ESP32）
 
@@ -30,7 +31,7 @@
 
 | cmd | 载荷 | 说明 |
 | --- | --- | --- |
-| `hello` | — | 握手，回 `{"event":"hello","protocol":1,"version":"1.4.0"}` |
+| `hello` | — | 握手，回 `{"event":"hello","protocol":1,"version":"2.0.0"}` |
 | `getState` | — | 立即补一帧 `state` |
 | `set` | `key`、`value` | 改单个配置项；成功回 `{"event":"ok","cmd":"set"}`，失败回 `{"event":"error","code":…,"arg1":…,"arg2":…,"message":…,"severity":…}` |
 | `setCurve` / `setRpmCurve` | `points: [[温度, PWM], …]` | 至少 2 点，后台按 x 排序并 clamp 到 0–100 |

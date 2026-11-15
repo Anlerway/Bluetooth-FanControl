@@ -26,4 +26,13 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <!-- 蓝牙桥是原生 DLL：测试进程也要能加载它 -->
+  <PropertyGroup>
+    <NativeBleDll>$(MSBuildThisFileDirectory)..\..\src\FanControl.Ble.Native\build\FanControl.Ble.dll</NativeBleDll>
+  </PropertyGroup>
+
+  <ItemGroup Condition="Exists('$(NativeBleDll)')">
+    <None Include="$(NativeBleDll)" CopyToOutputDirectory="PreserveNewest" Visible="false" />
+  </ItemGroup>
+
 </Project>

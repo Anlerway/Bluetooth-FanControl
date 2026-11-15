@@ -23,6 +23,8 @@ struct Theme {
     D2D1_COLOR_F controlHover;
     D2D1_COLOR_F track;          // 开关/进度条底槽
     D2D1_COLOR_F danger;
+    D2D1_COLOR_F dangerHover;
+    D2D1_COLOR_F dangerText;
     D2D1_COLOR_F ok;
 };
 

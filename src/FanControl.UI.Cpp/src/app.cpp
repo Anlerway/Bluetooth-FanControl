@@ -1,5 +1,6 @@
 #include "app.h"
 #include "i18n.h"
+#include "serialports.h"
 #include <dwmapi.h>
 #include <shellapi.h>
 #include <shobjidl.h>  // IFileOpenDialog：首次运行与设置页选数据目录
@@ -9,6 +10,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cwchar>
+#include <vector>
+
+#pragma comment(lib, "version.lib")
 
 namespace {
 constexpr float kSidebarWidth = 280.0f;
@@ -31,6 +35,21 @@ std::wstring Fmt(const wchar_t* fmt, ...) {
     vswprintf_s(buf, fmt, ap);
     va_end(ap);
     return buf;
+}
+
+// 资源版本：取宿主 FanControl.exe 的 VERSIONINFO，界面里不再写死一份版本号
+std::wstring HostVersion() {
+    wchar_t path[MAX_PATH] = {};
+    if (GetModuleFileNameW(nullptr, path, MAX_PATH) == 0) return L"2.0.0";
+    const DWORD size = GetFileVersionInfoSizeW(path, nullptr);
+    if (size == 0) return L"2.0.0";
+    std::vector<BYTE> data(size);
+    if (!GetFileVersionInfoW(path, 0, size, data.data())) return L"2.0.0";
+    VS_FIXEDFILEINFO* info = nullptr;
+    UINT len = 0;
+    if (!VerQueryValueW(data.data(), L"\\", reinterpret_cast<void**>(&info), &len) || !info) return L"2.0.0";
+    return Fmt(L"%u.%u.%u", HIWORD(info->dwFileVersionMS), LOWORD(info->dwFileVersionMS),
+               HIWORD(info->dwFileVersionLS));
 }
 
 bool SystemUsesLightTheme() {
@@ -541,7 +560,7 @@ void App::DrawSidebar(float w, float h) {
     FillRound(D2D1::RectF(24, by + 8, 32, by + 16), 4.0f, dot);
     Text(snap_.backendConnected ? fc::T(L"服务运行中") : fc::T(L"演示数据（服务未就绪）"),
          D2D1::RectF(40, by, kSidebarWidth - 20, by + 24), fSmall_, theme_.textSecondary);
-    Text(Fmt(fc::T(L"版本 1.4.0 · %s"), dark_ ? fc::T(L"深色") : fc::T(L"浅色")),
+    Text(Fmt(fc::T(L"版本 %s · %s"), HostVersion().c_str(), dark_ ? fc::T(L"深色") : fc::T(L"浅色")),
          D2D1::RectF(24, by + 24, kSidebarWidth - 20, by + 48), fSmall_, theme_.textTertiary);
 }
 
@@ -717,9 +736,9 @@ void App::DrawSettings(float x, float y, float w) {
                   Fmt(L"%.1f s", config_.pwmSmoothingWindowSeconds));
     }
 
-    // 3) 通信：串口/蓝牙只显示当前方式用得上的行，另一套收起来
+    // 3) 通信：端口/设备随方式切换；轮询、重连间隔与自动重连对串口和蓝牙都生效
     const bool serial = config_.communicationType == L"Com";
-    beginCard(L"通信", 2 + (serial ? 2 : 4));
+    beginCard(L"通信", serial ? 8 : 7);
     RowCombo(x, ry, w, rowH, L"set:comm", fc::T(L"通信方式"), fc::T(L"蓝牙 BLE 或串口"),
              serial ? fc::T(L"串口") : fc::T(L"蓝牙 BLE"));
     ry += rowH;
@@ -733,17 +752,17 @@ void App::DrawSettings(float x, float y, float w) {
         // 蓝牙设备要看到一屏候选（名字 + MAC）才选得准，行内下拉放不下，改成点行弹窗
         RowButton(x, ry, w, rowH, L"set:bledev", fc::T(L"蓝牙设备"), fc::T(L"已配对的 NUS 风扇"), DeviceLabel());
         ry += rowH;
-        RowSlider(x, ry, w, rowH, L"set:blepoll", fc::T(L"BLE 轮询"), fc::T(L"发送温度命令的间隔"),
-                  config_.blePollIntervalSeconds, 1, 30, Fmt(L"%d s", config_.blePollIntervalSeconds));
-        ry += rowH;
-        RowSlider(x, ry, w, rowH, L"set:reconnect", fc::T(L"重连间隔"), fc::T(L"断开后每隔多少秒重试一次"),
-                  config_.bleReconnectIntervalSeconds, 1, 60,
-                  Fmt(L"%d s", config_.bleReconnectIntervalSeconds));
-        ry += rowH;
-        RowToggle(x, ry, w, rowH, L"set:autoreconnect", fc::T(L"自动重连"), fc::T(L"断开后自动尝试恢复"),
-                  config_.autoReconnectBle);
-        ry += rowH;
     }
+    RowSlider(x, ry, w, rowH, L"set:blepoll", fc::T(L"连接轮询"), fc::T(L"发送温度命令的间隔"),
+              config_.blePollIntervalSeconds, 1, 30, Fmt(L"%d s", config_.blePollIntervalSeconds));
+    ry += rowH;
+    RowSlider(x, ry, w, rowH, L"set:reconnect", fc::T(L"重连间隔"), fc::T(L"断开后每隔多少秒重试一次"),
+              config_.bleReconnectIntervalSeconds, 1, 60,
+              Fmt(L"%d s", config_.bleReconnectIntervalSeconds));
+    ry += rowH;
+    RowToggle(x, ry, w, rowH, L"set:autoreconnect", fc::T(L"自动重连"), fc::T(L"断开后自动尝试恢复"),
+              config_.autoReconnectBle);
+    ry += rowH;
     RowStatus(x, ry, w, rowH, L"set:connstate", fc::T(L"连接状态"), fc::T(L"设备链路"), ConnectionLabel());
 
     // 4) 系统：采样与启动行为
@@ -918,7 +937,7 @@ void App::UndoCurve() {
 // 关于页按 1.3.0 的四块内容排：引用库 / 参考项目 / 开源地址 / 检查更新
 void App::DrawAbout(float x, float y, float w) {
     const float top = y;
-    Text(L"FanControl v1.4.0", D2D1::RectF(x, y, x + w, y + 34), fH2_, theme_.textPrimary);
+    Text(L"FanControl v" + HostVersion(), D2D1::RectF(x, y, x + w, y + 34), fH2_, theme_.textPrimary);
     y += 42;
 
     struct LibRow { const wchar_t* name; const wchar_t* version; };
@@ -1253,8 +1272,10 @@ void App::FillComboItems(const std::wstring& id) {
         comboBusy_ = true;
         fc::ListGpus();
     } else if (id == L"set:comport") {
-        comboBusy_ = true;
-        fc::ListPorts();
+        // 串口只枚举一次（fc::SerialPorts 自带缓存），不随每次打开下拉重扫
+        const auto& ports = fc::SerialPorts();
+        if (ports.empty()) add(TN(L"（未检测到串口）"), L"");
+        for (const std::wstring& port : ports) add(port, port);
     }
 }
 
@@ -1832,7 +1853,9 @@ void App::OnLButtonDown(int x, int y) {
 void App::OnLButtonUp(int x, int) {
     if (!sliderDrag_.empty()) {
         // 用松手位置落盘：最后一次 WM_MOUSEMOVE 可能与松手点差几个像素
-        sliderValue_ = SliderValueAt(sliderDrag_, x, sliderValue_);
+        // 松手坐标同样是物理像素，必须先除以 scale_ 换成 DIP，否则高 DPI 下会被 clamp 到最大值
+        const float sx = x / scale_;
+        sliderValue_ = SliderValueAt(sliderDrag_, static_cast<int>(std::lround(sx)), sliderValue_);
         ApplySliderValue(sliderDrag_, sliderValue_, true);
         sliderDrag_.clear();
         ReleaseCapture();

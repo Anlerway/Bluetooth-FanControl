@@ -1,7 +1,8 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <!-- BLE 已改 Win32 P/Invoke（bluetoothleapis + SetupAPI），不再需要 windows10.0.x 的 WinRT 投影（约 24 MB） -->
+    <!-- BLE 的 GATT 调用在 src/FanControl.Ble.Native（C++/WinRT）里，C# 只 P/Invoke 它：
+         这样可以继续用 net8.0-windows，不必拖 24 MB 的 Microsoft.Windows.SDK.NET.dll。 -->
     <TargetFramework>net8.0-windows</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
