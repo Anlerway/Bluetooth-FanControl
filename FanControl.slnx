@@ -1,4 +1,12 @@
 <Solution>
+  <!-- 声明解决方案配置：CI runner（vcvars）会导出 Platform=x64 环境变量，MSBuild 会把它当全局属性，
+       没有这一节时 dotnet restore FanControl.slnx 会报 MSB4126「Debug|x64 无效」。 -->
+  <Configurations>
+    <BuildType Name="Debug" />
+    <BuildType Name="Release" />
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+  </Configurations>
   <Folder Name="/src/">
     <Project Path="src/FanControl.Host/FanControl.Host.csproj" />
     <Project Path="src/FanControl.Service/FanControl.Service.csproj" />
