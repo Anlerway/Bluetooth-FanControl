@@ -129,8 +129,6 @@ Build the UI first, then the host (the host project copies `FanControl.UI.dll` i
 # UI (C++): build.bat calls vcvars64 and then cl; produces build\FanControl.UI.dll
 cd src\FanControl.UI.Cpp
 build.bat
-# or with CMake (bundled with Visual Studio)
-cmake -B build -S . && cmake --build build --config Release
 
 # Native BLE bridge (C++/WinRT): build.bat produces build\FanControl.Ble.dll; the host build/publish copies it
 cd src\FanControl.Ble.Native

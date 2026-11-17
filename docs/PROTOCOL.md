@@ -25,7 +25,6 @@
   - 界面 → 宿主：`FcUiSetCommandSink(callback)` 注册的回调，参数同样是完整 JSON 字符串。
 - 宿主每 400 ms 组装一帧 `state`（含 `config`）：内容与上一帧相同（除 `timestamp`）就跳过，最多每 1 s 补一次心跳；有变化立即推。界面连上后宿主先补一帧，界面也会发一次 `hello`。
 - 回调在**界面线程**上触发，宿主收到后立刻 `Task.Run` 转到线程池，不在界面线程里做配置写盘或设备 IO。
-- 因为不再跨进程，1.4.0 的 4 字节长度前缀分帧已经没有意义（`FanControl.Shared/Contracts/PipeFraming.cs` 保留但不再使用）。
 
 命令（界面 → 后台）：
 
@@ -97,4 +96,3 @@
 
 安全：界面与宿主是同一个进程（宿主以管理员身份运行），JSON 只在进程内传递；不监听任何网络端口，也没有管道 ACL 问题。
 
-> `FanControl.Shared/Contracts` 里的 `IpcMessage` / `IpcResponse` / `PipeFraming` 是命名管道时期的信封与分帧实现，现已不再使用；当前报文以上表为准（`cmd` / `event` 扁平结构）。

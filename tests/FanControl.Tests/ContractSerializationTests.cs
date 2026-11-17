@@ -81,46 +81,4 @@ public class ContractSerializationTests
         Assert.NotNull(restored);
         Assert.Equal(config, restored);
     }
-
-    [Fact]
-    public void IpcMessage_JsonRoundTrip_PreservesValues()
-    {
-        var message = new IpcMessage(IpcCommandType.SetCurve, "req-1", "[]");
-
-        var restored = JsonSerializer.Deserialize<IpcMessage>(
-            JsonSerializer.Serialize(message, Options),
-            Options);
-
-        Assert.NotNull(restored);
-        Assert.Equal(IpcCommandType.SetCurve, restored.Command);
-        Assert.Equal("req-1", restored.RequestId);
-        Assert.Equal("[]", restored.PayloadJson);
-    }
-
-    [Fact]
-    public void IpcResponse_Factories_ProduceExpectedEnvelope()
-    {
-        var ok = IpcResponse.Ok("r1", "{}");
-        var fail = IpcResponse.Fail("r2", "boom");
-
-        Assert.True(ok.Success);
-        Assert.Null(ok.Error);
-        Assert.Equal("r1", ok.RequestId);
-        Assert.False(fail.Success);
-        Assert.Equal("boom", fail.Error);
-    }
-
-    [Fact]
-    public void IpcCommandType_Values_AreStable()
-    {
-        Assert.Equal(0, (int)IpcCommandType.Ping);
-        Assert.Equal(1, (int)IpcCommandType.GetConfig);
-        Assert.Equal(2, (int)IpcCommandType.SetConfig);
-        Assert.Equal(3, (int)IpcCommandType.SetMode);
-        Assert.Equal(4, (int)IpcCommandType.SetCurve);
-        Assert.Equal(5, (int)IpcCommandType.SetCommunicationType);
-        Assert.Equal(6, (int)IpcCommandType.GetSnapshot);
-        Assert.Equal(7, (int)IpcCommandType.Restart);
-        Assert.Equal(8, (int)IpcCommandType.Shutdown);
-    }
 }

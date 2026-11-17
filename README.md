@@ -130,8 +130,6 @@ FanControl.slnx
 # 界面（C++）：build.bat 会先 call vcvars64 再调 cl，产出 build\FanControl.UI.dll
 cd src\FanControl.UI.Cpp
 build.bat
-# 或用 CMake（VS 自带 cmake）
-cmake -B build -S . && cmake --build build --config Release
 
 # 蓝牙原生桥（C++/WinRT）：build.bat 产出 build\FanControl.Ble.dll，宿主构建/发布会把它拷到输出目录
 cd src\FanControl.Ble.Native

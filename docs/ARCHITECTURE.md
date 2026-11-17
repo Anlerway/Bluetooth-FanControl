@@ -166,5 +166,5 @@ LibreHardwareMonitor 的模块是内存大头：只开 CPU 时私有 35 MB / 工
 
 仓库只放源码、构建脚本、必要工程文档和测试：
 
-- 进仓库：`*.cs` / `*.cpp` / `*.h` / `*.rc` / `*.csproj` / `CMakeLists.txt` / `build.bat` / `*.slnx` / `Directory.Build.props` / `.github/workflows` / `docs/` / `screenshots/` / `tests/`；
+- 进仓库：`*.cs` / `*.cpp` / `*.h` / `*.rc` / `*.csproj` / `build.bat` / `*.slnx` / `Directory.Build.props` / `.github/workflows` / `docs/` / `screenshots/` / `tests/`；
 - 不进仓库：`bin/`、`obj/`、`build/`、`.vs/`、发布目录、zip 与安装包等中间产物。打包脚本默认输出到仓库外的 `..\..\artifacts\`。
